@@ -1,6 +1,7 @@
 .nfs*
 .DS_Store
-
+*.yaml
+lightning_logs
 # compilation and distribution
 __pycache__
 _ext

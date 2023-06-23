@@ -26,8 +26,9 @@ import segmentation_models_pytorch as smp
 from transformers.models.maskformer.modeling_maskformer import dice_loss, sigmoid_focal_loss
 
 # Add the SAM directory to the system path
-sys.path.append("./segment-anything")
-from segment_anything import sam_model_registry
+sys.path.append("./")
+from SAM import sam_model_registry
+from SAM.utils.transforms import ResizeLongestSide
 
 NUM_WORKERS = 0  # https://github.com/pytorch/pytorch/issues/42518
 NUM_GPUS = torch.cuda.device_count()
@@ -155,6 +156,7 @@ class SAMFinetuner(pl.LightningModule):
             train_dataset=None,
             val_dataset=None,
             metrics_interval=10,
+            args=None
         ):
         super(SAMFinetuner, self).__init__()
 
@@ -182,20 +184,37 @@ class SAMFinetuner(pl.LightningModule):
         self.train_metric = defaultdict(lambda: deque(maxlen=metrics_interval))
 
         self.metrics_interval = metrics_interval
+        
+        self.transform = ResizeLongestSide(args.image_size)
+        self.args = args
 
-    def forward(self, imgs, bboxes, labels):
+    def forward(self, batch):
+        imgs = batch[0] 
+        gt_masks = batch[1]
+        points = batch[2]
+        point_labels = batch[3]
+
         _, _, H, W = imgs.shape
         features = self.model.image_encoder(imgs)
-        num_masks = sum([len(b) for b in bboxes])
+        ###
+        num_masks = imgs.shape[0]
 
         loss_focal = loss_dice = loss_iou = 0.
         predictions = []
         tp, fp, fn, tn = [], [], [], []
-        for feature, bbox, label in zip(features, bboxes, labels):
+        for feature, point, point_label, gt_mask in zip(features, points, point_labels, gt_masks):
+            
+            point_coords = self.transform.apply_coords_torch(point, (self.args.image_size, self.args.image_size))
+            coords_torch = torch.as_tensor(point_coords, dtype=torch.float, device=self.device)
+            labels_torch = torch.as_tensor(point_label, dtype=torch.int, device=self.device)
+            coords_torch, labels_torch = coords_torch[None, :, :], labels_torch[None, :]
+            
+            point = (coords_torch, labels_torch)
+            
             # Embed prompts
             sparse_embeddings, dense_embeddings = self.model.prompt_encoder(
-                points=None,
-                boxes=bbox,
+                points=point,
+                boxes=None,
                 masks=None,
             )
             # Predict masks
@@ -206,6 +225,8 @@ class SAMFinetuner(pl.LightningModule):
                 dense_prompt_embeddings=dense_embeddings,
                 multimask_output=False,
             )
+            print(low_res_masks)
+            print(low_res_masks.shape)
             # Upscale the masks to the original image resolution
             masks = F.interpolate(
                 low_res_masks,
@@ -214,19 +235,20 @@ class SAMFinetuner(pl.LightningModule):
                 align_corners=False,
             )
             predictions.append(masks)
+            
             # Compute the iou between the predicted masks and the ground truth masks
             batch_tp, batch_fp, batch_fn, batch_tn = smp.metrics.get_stats(
-                masks,
-                label.unsqueeze(1),
+                masks.squeeze(0),
+                gt_mask.unsqueeze(0),
                 mode='binary',
                 threshold=0.5,
             )
             batch_iou = smp.metrics.iou_score(batch_tp, batch_fp, batch_fn, batch_tn)
             # Compute the loss
             masks = masks.squeeze(1).flatten(1)
-            label = label.flatten(1)
-            loss_focal += sigmoid_focal_loss(masks, label.float(), num_masks)
-            loss_dice += dice_loss(masks, label.float(), num_masks)
+            gt_mask = gt_mask.flatten(1)
+            loss_focal += sigmoid_focal_loss(masks, gt_mask.float(), num_masks)
+            loss_dice += dice_loss(masks, gt_mask.float(), num_masks)
             loss_iou += F.mse_loss(iou_predictions, batch_iou, reduction='sum') / num_masks
             tp.append(batch_tp)
             fp.append(batch_fp)
@@ -245,8 +267,9 @@ class SAMFinetuner(pl.LightningModule):
         }
     
     def training_step(self, batch, batch_nb):
-        imgs, bboxes, labels = batch
-        outputs = self(imgs, bboxes, labels)
+        # imgs, bboxes, labels = batch
+        outputs = self(batch)
+        # outputs = self(imgs, bboxes, labels)
 
         for metric in ['tp', 'fp', 'fn', 'tn']:
             self.train_metric[metric].append(outputs[metric])
@@ -265,12 +288,13 @@ class SAMFinetuner(pl.LightningModule):
         return metrics
     
     def validation_step(self, batch, batch_nb):
-        imgs, bboxes, labels = batch
-        outputs = self(imgs, bboxes, labels)
+        # imgs, bboxes, labels = batch
+        # outputs = self(imgs, bboxes, labels)
+        outputs = self(batch)
         outputs.pop("predictions")
         return outputs
     
-    def validation_epoch_end(self, outputs):
+    def on_validation_epoch_end(self, outputs):
         if NUM_GPUS > 1:
             outputs = all_gather(outputs)
             # the outputs are a list of lists, so flatten it
@@ -316,7 +340,7 @@ class SAMFinetuner(pl.LightningModule):
     def train_dataloader(self):
         train_loader = torch.utils.data.DataLoader(
             self.train_dataset,
-            collate_fn=self.train_dataset.collate_fn,
+            # collate_fn=self.train_dataset.collate_fn,
             batch_size=self.batch_size,
             num_workers=NUM_WORKERS,
             shuffle=True)
@@ -325,11 +349,13 @@ class SAMFinetuner(pl.LightningModule):
     def val_dataloader(self):
         val_loader = torch.utils.data.DataLoader(
             self.val_dataset,
-            collate_fn=self.val_dataset.collate_fn,
+            # collate_fn=self.val_dataset.collate_fn,
             batch_size=self.batch_size,
             num_workers=NUM_WORKERS,
             shuffle=False)
         return val_loader
+
+from dataset import custom_text, augmentation
 
 
 def main():
@@ -350,9 +376,26 @@ def main():
 
     args = parser.parse_args()
 
+    
+    train_dataset = custom_text.CustomText(
+        data_root='../SAM_customizing/data/Custom_data',
+        is_training=True,
+        load_memory=False,
+        cfg=args,
+        transform= augmentation.Augmentation(size=args.image_size, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
+    )
+    
+    val_dataset = custom_text.CustomText(
+        data_root='../SAM_customizing/data/Custom_data',
+        is_training=False,
+        load_memory=False,
+        cfg=args,
+        transform= augmentation.Augmentation(size=args.image_size, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
+    )
+        
     # load the dataset
-    train_dataset = Coco2MaskDataset(data_root=args.data_root, split="train", image_size=args.image_size)
-    val_dataset = Coco2MaskDataset(data_root=args.data_root, split="val", image_size=args.image_size)
+    # train_dataset = Coco2MaskDataset(data_root=args.data_root, split="train", image_size=args.image_size)
+    # val_dataset = Coco2MaskDataset(data_root=args.data_root, split="val", image_size=args.image_size)
 
     # create the model
     model = SAMFinetuner(
@@ -367,6 +410,7 @@ def main():
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
         metrics_interval=args.metrics_interval,
+        args=args
     )
 
     callbacks = [

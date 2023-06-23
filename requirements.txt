@@ -2,6 +2,6 @@ numpy
 Pillow
 opencv-python
 sahi
-pytorch-lightning==1.8.2
+lightning
 segmentation-models-pytorch
 transformers
