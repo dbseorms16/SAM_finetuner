@@ -2,61 +2,6 @@
 
 This repository contains a simple starter code for finetuning the [FAIR Segment Anything](https://github.com/facebookresearch/segment-anything) (SAM) models leveraging the convenience of [PyTorch Lightning](https://lightning.ai/docs/pytorch/stable/).
 
-### Setup
-
-1. Install dependencies
-
-    First run
-    
-    ```bash
-    git clone --recurse-submodules git@github.com:bhpfelix/segment-anything-finetuner.git
-    ```
-    
-    Then
-    
-    ```bash
-    cd segment-anything-finetuner
-    ```
-
-    Follow the [setup instruction](https://github.com/facebookresearch/segment-anything/blob/main/README.md#installation) of Segment Anything to install the proper dependencies. Then run
-
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-2. Data preparation
-
-    The starter code supports Coco format input with the following layout
-
-    ```yaml
-    ├── dataset_name/
-    │   ├── train/
-    │   │   ├── _annotations.coco.json # COCO format annotation
-    │   │   ├── 000001.png             # Images
-    │   │   ├── 000002.png
-    │   │   ├── ...
-    │   ├── val/
-    │   │   ├── _annotations.coco.json # COCO format annotation
-    │   │   ├── xxxxxx.png             # Images
-    │   │   ├── ...
-    ```
-
-3. Download model checkpoints
-
-    Download the necessary SAM model checkpoints and arrange the repo as follows:
-
-    ```yaml
-    ├── dataset_name/              # structure as detailed above
-    │   ├── ...
-    ├── segment-anything/          # The FAIR SAM repo
-    │   ├── ...
-    ├── SAM/                       # the SAM pretrained checkpoints
-    │   ├── sam_vit_h_4b8939.pth
-    │   ├── ...
-    ├── finetune.py
-    ├── ...
-    ```
-
 ### Finetuning (`finetune.py`)
 
 This file contains a simple finetuning script for the Segment Anything model on Coco format datasets.
