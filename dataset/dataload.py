@@ -232,7 +232,7 @@ class TextDataset(object):
         image = torch.from_numpy(image).float()
 
         # train_mask = torch.from_numpy(train_mask).bool()
-        train_mask = torch.from_numpy(train_mask).float()
+        train_mask = torch.from_numpy(train_mask).long()
         label = torch.from_numpy(np.array([1])).int()
         
         

@@ -32,6 +32,8 @@ model_ts*.txt
 *.swo
 *.swp
 *~
+*.ckpt
+*.txt
 
 # editor settings
 .idea

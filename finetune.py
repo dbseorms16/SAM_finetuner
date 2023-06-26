@@ -29,6 +29,7 @@ from transformers.models.maskformer.modeling_maskformer import dice_loss, sigmoi
 sys.path.append("./")
 from SAM import sam_model_registry
 from SAM.utils.transforms import ResizeLongestSide
+from dataset import custom_text, augmentation
 
 NUM_WORKERS = 0  # https://github.com/pytorch/pytorch/issues/42518
 NUM_GPUS = torch.cuda.device_count()
@@ -88,59 +89,6 @@ def all_gather(data):
     return data_list
 
 
-# coco mask style dataloader
-class Coco2MaskDataset(Dataset):
-    def __init__(self, data_root, split, image_size):
-        self.data_root = data_root
-        self.split = split
-        self.image_size = image_size
-        annotation = os.path.join(data_root, split, "_annotations.coco.json")
-        self.coco = Coco.from_coco_dict_or_path(annotation)
-
-        # TODO: use ResizeLongestSide and pad to square
-        self.to_tensor = transforms.ToTensor()
-        self.normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        self.image_resize = transforms.Resize((image_size, image_size), interpolation=Image.BILINEAR)
-
-    def __len__(self):
-        return len(self.coco.images)
-
-    def __getitem__(self, index):
-        coco_image = self.coco.images[index]
-        image = Image.open(os.path.join(self.data_root, self.split, coco_image.file_name)).convert("RGB")
-        original_width, original_height = image.width, image.height
-        ratio_h = self.image_size / image.height
-        ratio_w = self.image_size / image.width
-        image = self.image_resize(image)
-        image = self.to_tensor(image)
-        image = self.normalize(image)
-
-        bboxes = []
-        masks = []
-        labels = []
-        for annotation in coco_image.annotations:
-            x, y, w, h = annotation.bbox
-            # get scaled bbox in xyxy format
-            bbox = [x * ratio_w, y * ratio_h, (x + w) * ratio_w, (y + h) * ratio_h]
-            mask = get_bool_mask_from_coco_segmentation(annotation.segmentation, original_width, original_height)
-            mask = cv2.resize(mask, (self.image_size, self.image_size), interpolation=cv2.INTER_LINEAR)
-            mask = (mask > 0.5).astype(np.uint8)
-            label = annotation.category_id
-            bboxes.append(bbox)
-            masks.append(mask)
-            labels.append(label)
-        bboxes = np.stack(bboxes, axis=0)
-        masks = np.stack(masks, axis=0)
-        labels = np.stack(labels, axis=0)
-        return image, torch.tensor(bboxes), torch.tensor(masks).long()
-    
-    @classmethod
-    def collate_fn(cls, batch):
-        images, bboxes, masks = zip(*batch)
-        images = torch.stack(images, dim=0)
-        return images, bboxes, masks
-
-
 class SAMFinetuner(pl.LightningModule):
 
     def __init__(
@@ -174,6 +122,9 @@ class SAMFinetuner(pl.LightningModule):
             for param in self.model.mask_decoder.parameters():
                 param.requires_grad = False
         
+        # for k, v in self.model.prompt_encoder.named_parameters():
+        #     print(k, v.requires_grad)
+                
         self.batch_size = batch_size
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
@@ -182,11 +133,14 @@ class SAMFinetuner(pl.LightningModule):
         self.val_dataset = val_dataset
 
         self.train_metric = defaultdict(lambda: deque(maxlen=metrics_interval))
+        self.val_metric = defaultdict(lambda: deque(maxlen=metrics_interval))
 
         self.metrics_interval = metrics_interval
         
         self.transform = ResizeLongestSide(args.image_size)
         self.args = args
+        self.mask_threshold : float = 0.0
+        self.validation_step_outputs = []
 
     def forward(self, batch):
         imgs = batch[0] 
@@ -212,11 +166,19 @@ class SAMFinetuner(pl.LightningModule):
             point = (coords_torch, labels_torch)
             
             # Embed prompts
+            # sparse_embeddings, dense_embeddings = self.model.prompt_encoder(
+            #     points=point,
+            #     boxes=None,
+            #     masks=None,
+            # )
+            
             sparse_embeddings, dense_embeddings = self.model.prompt_encoder(
+                feature=feature,
                 points=point,
                 boxes=None,
                 masks=None,
             )
+            
             # Predict masks
             low_res_masks, iou_predictions = self.model.mask_decoder(
                 image_embeddings=feature.unsqueeze(0),
@@ -225,8 +187,7 @@ class SAMFinetuner(pl.LightningModule):
                 dense_prompt_embeddings=dense_embeddings,
                 multimask_output=False,
             )
-            print(low_res_masks)
-            print(low_res_masks.shape)
+            
             # Upscale the masks to the original image resolution
             masks = F.interpolate(
                 low_res_masks,
@@ -234,19 +195,28 @@ class SAMFinetuner(pl.LightningModule):
                 mode="bilinear",
                 align_corners=False,
             )
-            predictions.append(masks)
             
+            predictions.append(masks)
+            # masks = masks > self.mask_threshold
+            
+            # 음... 아웃풋이 여러가지 숫자로 이루어진걸로 나오는데 object의 mask값을 어떻게 설정해야하지??
+            # 내가가진건 1로 구성된 것들... 
+            
+            # print(masks)
             # Compute the iou between the predicted masks and the ground truth masks
+            
             batch_tp, batch_fp, batch_fn, batch_tn = smp.metrics.get_stats(
-                masks.squeeze(0),
-                gt_mask.unsqueeze(0),
+                masks,
+                gt_mask.unsqueeze(0).unsqueeze(0),
                 mode='binary',
                 threshold=0.5,
             )
             batch_iou = smp.metrics.iou_score(batch_tp, batch_fp, batch_fn, batch_tn)
             # Compute the loss
+            
             masks = masks.squeeze(1).flatten(1)
-            gt_mask = gt_mask.flatten(1)
+            gt_mask = gt_mask.unsqueeze(0).flatten(1)
+            
             loss_focal += sigmoid_focal_loss(masks, gt_mask.float(), num_masks)
             loss_dice += dice_loss(masks, gt_mask.float(), num_masks)
             loss_iou += F.mse_loss(iou_predictions, batch_iou, reduction='sum') / num_masks
@@ -292,24 +262,36 @@ class SAMFinetuner(pl.LightningModule):
         # outputs = self(imgs, bboxes, labels)
         outputs = self(batch)
         outputs.pop("predictions")
-        return outputs
-    
-    def on_validation_epoch_end(self, outputs):
-        if NUM_GPUS > 1:
-            outputs = all_gather(outputs)
-            # the outputs are a list of lists, so flatten it
-            outputs = [item for sublist in outputs for item in sublist]
+        
+        for metric in ['tp', 'fp', 'fn', 'tn']:
+            self.val_metric[metric].append(outputs[metric])
+
         # aggregate step metics
-        step_metrics = [
-            torch.cat(list([x[metric].to(self.device) for x in outputs]))
-            for metric in ['tp', 'fp', 'fn', 'tn']]
+        step_metrics = [torch.cat(list(self.val_metric[metric])) for metric in ['tp', 'fp', 'fn', 'tn']]
+        per_mask_iou = smp.metrics.iou_score(*step_metrics, reduction="micro-imagewise")
+        
+        # if NUM_GPUS > 1:
+        #     outputs = all_gather(outputs)
+        #     # the outputs are a list of lists, so flatten it
+        #     outputs = [item for sublist in outputs for item in sublist]
+        # # aggregate step metics
+        # step_metrics = [
+        #     torch.cat(list([x[metric].to(self.device) for x in outputs]))
+        #     for metric in ['tp', 'fp', 'fn', 'tn']]
         # per mask IoU means that we first calculate IoU score for each mask
         # and then compute mean over these scores
-        per_mask_iou = smp.metrics.iou_score(*step_metrics, reduction="micro-imagewise")
+        print("val_per_mask_iou :", per_mask_iou)
+        # self.log_dict(metrics)
+        
+        self.validation_step_outputs.append(per_mask_iou)
+        # return metrics
+    
+    def on_validation_epoch_end(self):
 
-        metrics = {"val_per_mask_iou": per_mask_iou}
-        self.log_dict(metrics)
-        return metrics
+        epoch_average = torch.stack(self.validation_step_outputs).mean()
+        self.log("validation_epoch_average iou", epoch_average)
+        self.validation_step_outputs.clear()  # free memory
+
     
     def configure_optimizers(self):
         opt = torch.optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
@@ -326,7 +308,10 @@ class SAMFinetuner(pl.LightningModule):
             return warmup_step_lr
         scheduler = torch.optim.lr_scheduler.LambdaLR(
             opt,
-            warmup_step_lr_builder(250, [0.66667, 0.86666], 0.1)
+            # warmup_step_lr_builder(250, [0.66667, 0.86666], 0.1)
+            ### TODO
+            ## warmup change
+            warmup_step_lr_builder(5, [0.66667, 0.86666], 0.1)
         )
         return {
             'optimizer': opt,
@@ -354,9 +339,6 @@ class SAMFinetuner(pl.LightningModule):
             num_workers=NUM_WORKERS,
             shuffle=False)
         return val_loader
-
-from dataset import custom_text, augmentation
-
 
 def main():
     parser = argparse.ArgumentParser()
@@ -427,7 +409,7 @@ def main():
         ),
     ]
     trainer = pl.Trainer(
-        strategy='ddp' if NUM_GPUS > 1 else None,
+        strategy='ddp_find_unused_parameters_true' if NUM_GPUS > 1 else None,
         accelerator=DEVICE,
         devices=NUM_GPUS,
         precision=32,
@@ -436,7 +418,7 @@ def main():
         max_steps=args.steps,
         val_check_interval=args.metrics_interval,
         check_val_every_n_epoch=None,
-        num_sanity_val_steps=0,
+        num_sanity_val_steps=0
     )
 
     trainer.fit(model)
