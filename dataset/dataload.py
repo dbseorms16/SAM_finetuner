@@ -181,6 +181,7 @@ class TextDataset(object):
         for idx, polygon in enumerate(polygons):
             if idx >= cfg.max_annotation:
                 break
+            
             polygon.points[:, 0] = np.clip(polygon.points[:, 0], 1, w - 2)
             polygon.points[:, 1] = np.clip(polygon.points[:, 1], 1, h - 2)
             gt_points[idx, :, :] = polygon.get_sample_point(size=(h, w))
@@ -215,24 +216,24 @@ class TextDataset(object):
 
         return train_mask, tr_mask, \
                distance_field, direction_field, \
-               weight_matrix, gt_points, proposal_points, ignore_tags
+               weight_matrix, gt_points, proposal_points, ignore_tags, inst_mask
 
     def get_training_data(self, image, polygons, center_point, image_id=None, image_path=None):
         np.random.seed()
         if self.transform:
             #image, polygons = self.transform(image, polygons)
-            image, polygons = self.transform(copy.deepcopy(image), copy.deepcopy(polygons))
+            image, polygons, center_point = self.transform(copy.deepcopy(image), copy.deepcopy(polygons), copy.deepcopy(center_point))
 
         train_mask, tr_mask, \
         distance_field, direction_field, \
-        weight_matrix, gt_points, proposal_points, ignore_tags = self.make_text_region(image, polygons)
+        weight_matrix, gt_points, proposal_points, ignore_tags, inst_mask = self.make_text_region(image, polygons)
 		
   		# # to pytorch channel sequence
         image = np.ascontiguousarray(image.transpose(2, 0, 1))
         image = torch.from_numpy(image).float()
 
         # train_mask = torch.from_numpy(train_mask).bool()
-        train_mask = torch.from_numpy(train_mask).long()
+        train_mask = torch.from_numpy(inst_mask).long()
         label = torch.from_numpy(np.array([1])).int()
         
         
@@ -252,19 +253,20 @@ class TextDataset(object):
         np.random.seed()
         if self.transform:
             #image, polygons = self.transform(image, polygons)
-            image, polygons = self.transform(copy.deepcopy(image), copy.deepcopy(polygons))
+
+            image, polygons, center_point = self.transform(copy.deepcopy(image), copy.deepcopy(polygons), copy.deepcopy(center_point))
             
         np.random.seed()
         # # to pytorch channel sequence
         train_mask, tr_mask, \
         distance_field, direction_field, \
-        weight_matrix, gt_points, proposal_points, ignore_tags = self.make_text_region(image, polygons)
+        weight_matrix, gt_points, proposal_points, ignore_tags, inst_mask = self.make_text_region(image, polygons)
 
         # # to pytorch channel sequence
         image = image.transpose(2, 0, 1)
         image = torch.from_numpy(image).float()
 
-        train_mask = torch.from_numpy(train_mask).bool()
+        train_mask = torch.from_numpy(inst_mask).bool()
         # tr_mask = torch.from_numpy(tr_mask).int()
         # weight_matrix = torch.from_numpy(weight_matrix).float()
         # direction_field = torch.from_numpy(direction_field).float()

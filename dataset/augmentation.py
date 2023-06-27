@@ -180,7 +180,9 @@ def perform_operation(images, back, magnitude, is_training=False):
                 pos_x, pos_y = rd.randint(0, abs(int(b_w - w_pad))), rd.randint(0, abs(int(b_h - h_pad)))
             else :
                 pos_x, pos_y = abs(int(b_w//2)-(width//2)), abs(int(b_h//2)-(height//2))
-                
+            
+            center_point_x = 0
+            center_point_y = 0
             coordinates = []
             for px, py in original_plane:
                 new_x = float(a * px + b * py + c) / float(g * px + h * py + 1)
@@ -193,9 +195,13 @@ def perform_operation(images, back, magnitude, is_training=False):
                 pos_xNew += pos_x
                 pos_yNew += pos_y
                 coordinates.append((pos_xNew, pos_yNew))
+                
+                center_point_x += pos_xNew
+                center_point_y += pos_yNew
             
             back.paste(im=images, box=(pos_x, pos_y), mask=images)
-            center_point = np.array([[pos_x, pos_y]])
+            
+            center_point = np.array([[center_point_x//4, center_point_y//4]])
             
             return back, coordinates, center_point
 
@@ -254,10 +260,10 @@ class Compose(object):
     def __init__(self, transforms):
         self.transforms = transforms
 
-    def __call__(self, img, pts=None):
+    def __call__(self, img, pts=None, center_point=None):
         for t in self.transforms:
-            img, pts = t(img, pts)
-        return img, pts
+            img, pts, center_point = t(img, pts, center_point)
+        return img, pts, center_point
 
 
 class Normalize(object):
@@ -265,12 +271,21 @@ class Normalize(object):
         self.mean = np.array(mean)
         self.std = np.array(std)
 
-    def __call__(self, image, polygons=None):
+    def __call__(self, image, polygons=None, center_point=None):
         image = image.astype(np.float32)
         image /= 255.0
         image -= self.mean
         image /= self.std
-        return image, polygons
+        return image, polygons, center_point
+
+def DeNormalize(image):
+    mean=(0.485, 0.456, 0.406)
+    std=(0.229, 0.224, 0.225)
+    
+    image *= std
+    image += mean
+    image *= 255.0
+    return image
 
 
 class MinusMean(object):
@@ -522,12 +537,12 @@ class RotatePadding(object):
 
 class SquarePadding(object):
 
-    def __call__(self, image, polygons=None):
+    def __call__(self, image, polygons=None, center_point=None):
 
         H, W, _ = image.shape
 
         if H == W:
-            return image, polygons
+            return image, polygons, center_point
 
         padding_size = max(H, W)
         (h_index, w_index) = (np.random.randint(0, H*7//8),np.random.randint(0, W*7//8))
@@ -542,10 +557,11 @@ class SquarePadding(object):
         if polygons is not None:
             for polygon in polygons:
                 polygon.points += np.array([x0, y0])
+                center_point += np.array([x0, y0])
         expand_image[y0:y0+H, x0:x0+W] = image
         image = expand_image
 
-        return image, polygons
+        return image, polygons, center_point
 
 
 class RandomImgCropPatch(object):
@@ -794,7 +810,7 @@ class RandomResizeScale(object):
         self.size = size
         self.ratio = ratio
 
-    def __call__(self, image, polygons=None):
+    def __call__(self, image, polygons=None, center_point=None):
 
         aspect_ratio = np.random.uniform(self.ratio[0], self.ratio[1])
         h, w, _ = image.shape
@@ -806,8 +822,9 @@ class RandomResizeScale(object):
         if polygons is not None:
             for polygon in polygons:
                 polygon.points = polygon.points * scales
+                center_point = center_point * scales
 
-        return image, polygons
+        return image, polygons, center_point
 
 
 class Resize(object):
@@ -867,9 +884,9 @@ class ResizeLimitSquare(object):
         self.ratio = ratio
         self.SP = SquarePadding()
 
-    def __call__(self, image, polygons=None):
+    def __call__(self, image, polygons=None, center_point=None):
         if np.random.random() <= self.ratio:
-            image, polygons = self.SP(image, polygons)
+            image, polygons, center_point = self.SP(image, polygons, center_point)
         h, w, _ = image.shape
         image = cv2.resize(image, (self.size,self.size))
         scales = np.array([self.size*1.0/ w, self.size*1.0 / h])
@@ -877,8 +894,9 @@ class ResizeLimitSquare(object):
         if polygons is not None:
             for polygon in polygons:
                 polygon.points = polygon.points * scales
+                center_point = center_point * scales
 
-        return image, polygons
+        return image, polygons, center_point
 
 
 class RandomResizePadding(object):
@@ -936,24 +954,30 @@ class RandomDistortion(object):
 
 
 class Augmentation(object):
-    def __init__(self, size, mean, std):
+    def __init__(self, is_training, size, mean, std):
         self.size = size
         self.mean = mean
         self.std = std
         self._transform_dict = {'brightness': 0.5, 'contrast': 0.5, 'sharpness': 0.8386, 'color': 0.5}
-        self.augmentation = Compose([
-            # RandomCropFlip(),
-            RandomResizeScale(size=self.size, ratio=(3. / 8, 5. / 2)),
-            # RandomResizedCrop(),
-            # RotatePadding(up=60, colors=True),  # pretrain on Syn is "up=30", else is "up=60"
-            ResizeLimitSquare(size=self.size),
-            # RandomMirror(),
-            # RandomDistortion(self._transform_dict),
-            Normalize(mean=self.mean, std=self.std),
-        ])
-
-    def __call__(self, image, polygons=None):
-        return self.augmentation(image, polygons)
+        if is_training:
+            self.augmentation = Compose([
+                # RandomCropFlip(),
+                RandomResizeScale(size=self.size, ratio=(3. / 8, 5. / 2)),
+                # RandomResizedCrop(),
+                # RotatePadding(up=60, colors=True),  # pretrain on Syn is "up=30", else is "up=60"
+                ResizeLimitSquare(size=self.size),
+                # RandomMirror(),
+                # RandomDistortion(self._transform_dict),
+                Normalize(mean=self.mean, std=self.std),
+            ])
+        else:
+            self.augmentation = Compose([
+                ResizeLimitSquare(size=self.size),
+                Normalize(mean=self.mean, std=self.std),
+            ])
+            
+    def __call__(self, image, polygons=None, center_point=None):
+        return self.augmentation(image, polygons, center_point)
 
 
 class BaseTransform(object):

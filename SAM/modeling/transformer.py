@@ -162,6 +162,7 @@ class TwoWayAttentionBlock(nn.Module):
             queries = queries + attn_out
         queries = self.norm1(queries)
 
+        # print(queries.shape, query_pe.shape, keys.shape, key_pe.shape)
         # Cross attention block, tokens attending to image embedding
         q = queries + query_pe
         k = keys + key_pe
@@ -224,7 +225,6 @@ class Attention(nn.Module):
         q = self.q_proj(q)
         k = self.k_proj(k)
         v = self.v_proj(v)
-
         # Separate into heads
         q = self._separate_heads(q, self.num_heads)
         k = self._separate_heads(k, self.num_heads)

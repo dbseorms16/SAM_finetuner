@@ -1,3 +1,4 @@
+*.png
 .nfs*
 .DS_Store
 *.yaml

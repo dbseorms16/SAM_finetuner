@@ -17,6 +17,8 @@ from operator import mul
 import math
 from functools import reduce
 
+from .transformer import TwoWayAttentionBlock
+
 class PromptEncoder(nn.Module):
     def __init__(
         self,
@@ -65,20 +67,36 @@ class PromptEncoder(nn.Module):
 
         ### 결국엔 point의 임베딩된 feature를 받아서 이를 적절한 feature로 변경하는 것이 목표
         
-        # prompt 포인트 갯수
-        num_tokens = 2 
-        patch_size = (16, 16)
-        prompt_dim = embed_dim
-        dropout = 0.1
-        # prompt 포인트 갯수
-        self.j_prompt_embeddings = nn.Parameter(torch.zeros(
-                1, num_tokens, prompt_dim))
+        # # prompt 포인트 갯수
+        # num_tokens = 2 
+        # patch_size = (16, 16)
+        # prompt_dim = embed_dim
+        # dropout = 0.1
+        # # prompt 포인트 갯수
+        # self.j_prompt_embeddings = nn.Parameter(torch.zeros(
+        #         1, num_tokens, prompt_dim))
         
-        # 가중치 초기화
-        val = math.sqrt(6. / float(3 * reduce(mul, patch_size, 1) + prompt_dim))  # noqa
-        nn.init.uniform_(self.j_prompt_embeddings.data, -val, val)
-        self.j_prompt_proj = nn.Identity()
-        self.j_prompt_dropout = Dropout(dropout)
+        # # 가중치 초기화
+        # val = math.sqrt(6. / float(3 * reduce(mul, patch_size, 1) + prompt_dim))  # noqa
+        # nn.init.uniform_(self.j_prompt_embeddings.data, -val, val)
+        # self.j_prompt_proj = nn.Identity()
+        # self.j_prompt_dropout = Dropout(dropout)
+        
+        # depth=2,
+        # embedding_dim=prompt_embed_dim (256),
+        mlp_dim = 2048
+        num_heads= 8
+        attention_downsample_rate= 2
+        self.modulate_prompt = TwoWayAttentionBlock(
+                    embedding_dim=embed_dim,
+                    num_heads=num_heads,
+                    mlp_dim=mlp_dim,
+                    activation=activation,
+                    attention_downsample_rate=attention_downsample_rate,
+                    skip_first_layer_pe=False,
+                    # skip_first_layer_pe=True,
+                )
+        
         
     def get_dense_pe(self) -> torch.Tensor:
         """
@@ -95,6 +113,7 @@ class PromptEncoder(nn.Module):
         self,
         points: torch.Tensor,
         labels: torch.Tensor,
+        feature: torch.Tensor,
         pad: bool,
     ) -> torch.Tensor:
         """Embeds point prompts."""
@@ -106,6 +125,29 @@ class PromptEncoder(nn.Module):
             labels = torch.cat([labels, padding_label], dim=1)
         point_embedding = self.pe_layer.forward_with_coords(points, self.input_image_size)
         
+        # point point_embedding = (B, N, 256)
+        # Embedded feature (B, 256, 64, 64)
+        # 256 64 64
+        image_embedding = feature.flatten(1).unsqueeze(0).permute(0, 2, 1)
+        # 1 4096 256
+        #1 4096 256
+        image_pe = self.get_dense_pe().flatten(2).permute(0, 2, 1)
+        
+        queries = point_embedding
+        keys = image_embedding
+        
+        # print('1', feature.shape, queries.shape, keys.shape, point_embedding.shape, image_pe.shape)
+        queries, keys = self.modulate_prompt(
+                queries=queries,
+                keys=keys,
+                query_pe=point_embedding,
+                key_pe=image_pe,
+            )
+        # torch.Size([1, 2, 256]) torch.Size([1, 4096, 256])
+        # print(self.modulate_prompt.mlp.lin1.weight)
+        ## 바뀐다
+        # print('2', queries.shape, keys.shape)
+        point_embedding = point_embedding + queries
         # j_embeddings = self.j_prompt_dropout(self.j_prompt_proj(self.j_prompt_embeddings).expand(points.shape[0], -1, -1))
         # print(self.j_prompt_embeddings)
         # print(self.j_prompt_embeddings.shape)
@@ -221,12 +263,12 @@ class PromptEncoder(nn.Module):
           torch.Tensor: dense embeddings for the masks, in the shape
             Bx(embed_dim)x(embed_H)x(embed_W)
         """
-        # feature 가지고 Transformer구현
         bs = self._get_batch_size(points, boxes, masks)
         sparse_embeddings = torch.empty((bs, 0, self.embed_dim), device=self._get_device())
         if points is not None:
             coords, labels = points
-            point_embeddings = self._embed_points(coords, labels, pad=(boxes is None))
+            point_embeddings = self._embed_points(coords, labels, feature, pad=(boxes is None))
+            # point_embeddings = self._embed_points(coords, labels, pad=(boxes is None))
             sparse_embeddings = torch.cat([sparse_embeddings, point_embeddings], dim=1)
         if boxes is not None:
             box_embeddings = self._embed_boxes(boxes)

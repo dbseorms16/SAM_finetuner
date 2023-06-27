@@ -22,8 +22,10 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 
 import segmentation_models_pytorch as smp
-
 from transformers.models.maskformer.modeling_maskformer import dice_loss, sigmoid_focal_loss
+
+from predict_utils import show_mask, show_points
+import matplotlib.pyplot as plt
 
 # Add the SAM directory to the system path
 sys.path.append("./")
@@ -116,8 +118,11 @@ class SAMFinetuner(pl.LightningModule):
             for param in self.model.image_encoder.parameters():
                 param.requires_grad = False
         if freeze_prompt_encoder:
-            for param in self.model.prompt_encoder.parameters():
-                param.requires_grad = False
+            for k, param in self.model.prompt_encoder.named_parameters():
+                if 'modulate_prompt' in k:
+                  param.requires_grad = True
+                else:
+                  param.requires_grad = False
         if freeze_mask_decoder:
             for param in self.model.mask_decoder.parameters():
                 param.requires_grad = False
@@ -141,6 +146,8 @@ class SAMFinetuner(pl.LightningModule):
         self.args = args
         self.mask_threshold : float = 0.0
         self.validation_step_outputs = []
+        self.save_base = args.output_dir + '/val_results'
+        self.metrics_interval_num = 0
 
     def forward(self, batch):
         imgs = batch[0] 
@@ -199,10 +206,6 @@ class SAMFinetuner(pl.LightningModule):
             predictions.append(masks)
             # masks = masks > self.mask_threshold
             
-            # 음... 아웃풋이 여러가지 숫자로 이루어진걸로 나오는데 object의 mask값을 어떻게 설정해야하지??
-            # 내가가진건 1로 구성된 것들... 
-            
-            # print(masks)
             # Compute the iou between the predicted masks and the ground truth masks
             
             batch_tp, batch_fp, batch_fn, batch_tn = smp.metrics.get_stats(
@@ -261,35 +264,68 @@ class SAMFinetuner(pl.LightningModule):
         # imgs, bboxes, labels = batch
         # outputs = self(imgs, bboxes, labels)
         outputs = self(batch)
-        outputs.pop("predictions")
         
+        imgs = batch[0] 
+        gt_masks = batch[1]
+        points = batch[2]
+        point_labels = batch[3]
+        pred_masks = outputs['predictions']
+        outputs.pop("predictions")
+        num = self.metrics_interval_num
+        for i, (img, gt_mask, pred_mask, point, point_label) in enumerate(zip(imgs, gt_masks, pred_masks, points, point_labels)):
+            img = img.permute(1,2,0).detach().cpu().numpy()
+            img = augmentation.DeNormalize(img).astype(int)
+            
+            plt.figure(figsize=(10,10))
+            plt.imshow(img)
+            # ##mask save
+            # pred_mask = pred_mask.squeeze(0).squeeze(0).detach().cpu().numpy().astype(int)
+            # pred_mask = pred_mask.detach().cpu().numpy().astype(int)
+            pred_mask = pred_mask > 0.0
+
+            # # iou, f_score, precision, recall = calculate_metrics(pred_mask, gt_mask)
+            show_mask(pred_mask, plt.gca())
+            show_points(point.detach().cpu().numpy(), point_label.detach().cpu().numpy(), plt.gca())
+            
+            # # plt.title(f"Mask {i+1}, IOU: {iou:.3f}, F-score: {f_score:.3f}, precision: {precision:.3f}, recall: {recall:.3f}, Confidence: {score:.3f}", fontsize=12)
+            # # plt.axis('off')
+            filename = f"{num}_pred_{i}.png"
+            plt.savefig(os.path.join(self.save_base, filename), bbox_inches='tight', pad_inches=0)
+            plt.close()
+            
+            
+            plt.figure(figsize=(10,10))
+            plt.imshow(img)
+            ##mask save
+            gt_mask = gt_mask.detach().cpu().numpy()
+            
+            # iou, f_score, precision, recall = calculate_metrics(pred_mask, gt_mask)
+            show_mask(gt_mask, plt.gca())
+            show_points(point.detach().cpu().numpy(), point_label.detach().cpu().numpy(), plt.gca())
+            
+            filename = f"{num}_gt_{i}.png"
+            plt.savefig(os.path.join(self.save_base, filename), bbox_inches='tight', pad_inches=0)
+            plt.close()
+        
+        self.metrics_interval_num += 1
+        
+        ## validation log 
         for metric in ['tp', 'fp', 'fn', 'tn']:
             self.val_metric[metric].append(outputs[metric])
-
         # aggregate step metics
         step_metrics = [torch.cat(list(self.val_metric[metric])) for metric in ['tp', 'fp', 'fn', 'tn']]
         per_mask_iou = smp.metrics.iou_score(*step_metrics, reduction="micro-imagewise")
-        
-        # if NUM_GPUS > 1:
-        #     outputs = all_gather(outputs)
-        #     # the outputs are a list of lists, so flatten it
-        #     outputs = [item for sublist in outputs for item in sublist]
-        # # aggregate step metics
-        # step_metrics = [
-        #     torch.cat(list([x[metric].to(self.device) for x in outputs]))
-        #     for metric in ['tp', 'fp', 'fn', 'tn']]
-        # per mask IoU means that we first calculate IoU score for each mask
-        # and then compute mean over these scores
-        print("val_per_mask_iou :", per_mask_iou)
-        # self.log_dict(metrics)
-        
         self.validation_step_outputs.append(per_mask_iou)
-        # return metrics
+        metrics = {"val_per_mask_iou": per_mask_iou}
+        # self.log_dict(metrics)
+        self.log("val_per_mask_iou", per_mask_iou, sync_dist=True)
+        
+        return metrics
     
     def on_validation_epoch_end(self):
 
         epoch_average = torch.stack(self.validation_step_outputs).mean()
-        self.log("validation_epoch_average iou", epoch_average)
+        self.log("validation_epoch_average iou", epoch_average, sync_dist=True)
         self.validation_step_outputs.clear()  # free memory
 
     
@@ -308,10 +344,8 @@ class SAMFinetuner(pl.LightningModule):
             return warmup_step_lr
         scheduler = torch.optim.lr_scheduler.LambdaLR(
             opt,
-            # warmup_step_lr_builder(250, [0.66667, 0.86666], 0.1)
-            ### TODO
             ## warmup change
-            warmup_step_lr_builder(5, [0.66667, 0.86666], 0.1)
+            warmup_step_lr_builder(250, [0.66667, 0.86666], 0.1)
         )
         return {
             'optimizer': opt,
@@ -364,7 +398,7 @@ def main():
         is_training=True,
         load_memory=False,
         cfg=args,
-        transform= augmentation.Augmentation(size=args.image_size, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
+        transform= augmentation.Augmentation(is_training = True, size=args.image_size, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
     )
     
     val_dataset = custom_text.CustomText(
@@ -372,7 +406,7 @@ def main():
         is_training=False,
         load_memory=False,
         cfg=args,
-        transform= augmentation.Augmentation(size=args.image_size, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
+        transform= augmentation.Augmentation(is_training = False, size=args.image_size, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
     )
         
     # load the dataset
