@@ -46,15 +46,15 @@ class CustomText_test_one(TextDataset):
         # startx, starty = polygon[0][0], polygon[0][1]
         # lastx, lasty = polygon[1][0], polygon[2][1]
         # large_y = polygon[2][1]
-        # startx, starty = 482, 208
-        # lastx, lasty = 1210, 870
+        startx, starty = 480, 200
+        lastx, lasty = 1210, 870
         
-        startx, starty = 500, 450
-        lastx, lasty = 600, 550
+        # startx, starty = 500, 450
+        # lastx, lasty = 550, 500
                 
         self.center_point = []
-        xstep = 10
-        ystep = 10
+        xstep = 5
+        ystep = 5
         for x in range(startx, lastx + xstep, xstep):
             for y in range(starty, lasty + ystep, ystep):
                 self.center_point.append(np.array([[x, y]]))
