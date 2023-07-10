@@ -24,18 +24,22 @@ from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 import segmentation_models_pytorch as smp
 from transformers.models.maskformer.modeling_maskformer import dice_loss, sigmoid_focal_loss
 
-from predict_utils import show_mask, show_points
+from predict_utils import show_mask, show_points, calculate_metrics
 import matplotlib.pyplot as plt
-
+import matplotlib as mpl
+import matplotlib.cm as cm
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 # Add the SAM directory to the system path
 sys.path.append("./")
 from SAM import sam_model_registry
 from SAM.utils.transforms import ResizeLongestSide
-from dataset import custom_text, augmentation
+from dataset import custom_text, augmentation, custom_text_test, custom_text_test_one, custom_text_test_realdata
+import time
 
-NUM_WORKERS = 0  # https://github.com/pytorch/pytorch/issues/42518
-NUM_GPUS = torch.cuda.device_count()
+# NUM_GPUS = torch.cuda.device_count()
+NUM_GPUS = 1
 DEVICE = 'cuda'
+NUM_WORKERS = 0  # https://github.com/pytorch/pytorch/issues/42518
 
 
 # Source: https://github.com/facebookresearch/detectron2/blob/main/detectron2/utils/comm.py
@@ -148,20 +152,23 @@ class SAMFinetuner(pl.LightningModule):
         self.validation_step_outputs = []
         self.save_base = args.output_dir + '/val_results'
         self.metrics_interval_num = 0
+        self.miou_activation_map = np.zeros((1024,1024,1), dtype=float)
+        self.img = np.zeros((1024,1024,3), dtype=float)
 
     def forward(self, batch):
         imgs = batch[0] 
         gt_masks = batch[1]
         points = batch[2]
         point_labels = batch[3]
-
         _, _, H, W = imgs.shape
+        
         features = self.model.image_encoder(imgs)
         ###
         num_masks = imgs.shape[0]
 
         loss_focal = loss_dice = loss_iou = 0.
         predictions = []
+        confidence_predictions = []
         tp, fp, fn, tn = [], [], [], []
         for feature, point, point_label, gt_mask in zip(features, points, point_labels, gt_masks):
             
@@ -204,6 +211,7 @@ class SAMFinetuner(pl.LightningModule):
             )
             
             predictions.append(masks)
+            confidence_predictions.append(iou_predictions)
             # masks = masks > self.mask_threshold
             
             # Compute the iou between the predicted masks and the ground truth masks
@@ -233,6 +241,7 @@ class SAMFinetuner(pl.LightningModule):
             'loss_dice': loss_dice,
             'loss_iou': loss_iou,
             'predictions': predictions,
+            'confidence_predictions': confidence_predictions,
             'tp': torch.cat(tp),
             'fp': torch.cat(fp),
             'fn': torch.cat(fn),
@@ -270,44 +279,45 @@ class SAMFinetuner(pl.LightningModule):
         points = batch[2]
         point_labels = batch[3]
         pred_masks = outputs['predictions']
+        outputs.pop("confidence_predictions")
         outputs.pop("predictions")
-        num = self.metrics_interval_num
-        for i, (img, gt_mask, pred_mask, point, point_label) in enumerate(zip(imgs, gt_masks, pred_masks, points, point_labels)):
-            img = img.permute(1,2,0).detach().cpu().numpy()
-            img = augmentation.DeNormalize(img).astype(int)
+        # num = self.metrics_interval_num
+        # for i, (img, gt_mask, pred_mask, point, point_label) in enumerate(zip(imgs, gt_masks, pred_masks, points, point_labels)):
+        #     img = img.permute(1,2,0).detach().cpu().numpy()
+        #     img = augmentation.DeNormalize(img).astype(int)
             
-            plt.figure(figsize=(10,10))
-            plt.imshow(img)
-            # ##mask save
-            # pred_mask = pred_mask.squeeze(0).squeeze(0).detach().cpu().numpy().astype(int)
-            # pred_mask = pred_mask.detach().cpu().numpy().astype(int)
-            pred_mask = pred_mask > 0.0
+        #     plt.figure(figsize=(10,10))
+        #     plt.imshow(img)
+        #     # ##mask save
+        #     # pred_mask = pred_mask.squeeze(0).squeeze(0).detach().cpu().numpy().astype(int)
+        #     # pred_mask = pred_mask.detach().cpu().numpy().astype(int)
+        #     pred_mask = pred_mask > 0.0
 
-            # # iou, f_score, precision, recall = calculate_metrics(pred_mask, gt_mask)
-            show_mask(pred_mask, plt.gca())
-            show_points(point.detach().cpu().numpy(), point_label.detach().cpu().numpy(), plt.gca())
+        #     # # iou, f_score, precision, recall = calculate_metrics(pred_mask, gt_mask)
+        #     show_mask(pred_mask, plt.gca())
+        #     show_points(point.detach().cpu().numpy(), point_label.detach().cpu().numpy(), plt.gca())
             
-            # # plt.title(f"Mask {i+1}, IOU: {iou:.3f}, F-score: {f_score:.3f}, precision: {precision:.3f}, recall: {recall:.3f}, Confidence: {score:.3f}", fontsize=12)
-            # # plt.axis('off')
-            filename = f"{num}_pred_{i}.png"
-            plt.savefig(os.path.join(self.save_base, filename), bbox_inches='tight', pad_inches=0)
-            plt.close()
+        #     # # plt.title(f"Mask {i+1}, IOU: {iou:.3f}, F-score: {f_score:.3f}, precision: {precision:.3f}, recall: {recall:.3f}, Confidence: {score:.3f}", fontsize=12)
+        #     # # plt.axis('off')
+        #     filename = f"{num}_pred_{i}.png"
+        #     plt.savefig(os.path.join(self.save_base, filename), bbox_inches='tight', pad_inches=0)
+        #     plt.close()
             
             
-            plt.figure(figsize=(10,10))
-            plt.imshow(img)
-            ##mask save
-            gt_mask = gt_mask.detach().cpu().numpy()
+        #     plt.figure(figsize=(10,10))
+        #     plt.imshow(img)
+        #     ##mask save
+        #     gt_mask = gt_mask.detach().cpu().numpy()
             
-            # iou, f_score, precision, recall = calculate_metrics(pred_mask, gt_mask)
-            show_mask(gt_mask, plt.gca())
-            show_points(point.detach().cpu().numpy(), point_label.detach().cpu().numpy(), plt.gca())
+        #     # iou, f_score, precision, recall = calculate_metrics(pred_mask, gt_mask)
+        #     show_mask(gt_mask, plt.gca())
+        #     show_points(point.detach().cpu().numpy(), point_label.detach().cpu().numpy(), plt.gca())
             
-            filename = f"{num}_gt_{i}.png"
-            plt.savefig(os.path.join(self.save_base, filename), bbox_inches='tight', pad_inches=0)
-            plt.close()
+        #     filename = f"{num}_gt_{i}.png"
+        #     plt.savefig(os.path.join(self.save_base, filename), bbox_inches='tight', pad_inches=0)
+        #     plt.close()
         
-        self.metrics_interval_num += 1
+        # self.metrics_interval_num += 1
         
         ## validation log 
         for metric in ['tp', 'fp', 'fn', 'tn']:
@@ -373,7 +383,109 @@ class SAMFinetuner(pl.LightningModule):
             num_workers=NUM_WORKERS,
             shuffle=False)
         return val_loader
+    
+    def test_step(self, batch, batch_nb):
+        # imgs, bboxes, labels = batch
+        # outputs = self(imgs, bboxes, labels)
+        outputs = self(batch)
+        
+        imgs = batch[0] 
+        gt_masks = batch[1]
+        points = batch[2]
+        point_labels = batch[3]
+        image_ids = batch[4]
+        pred_masks = outputs['predictions']
+        confidence_predictions = outputs['confidence_predictions']
+        outputs.pop("predictions")
+        outputs.pop("confidence_predictions")
+        num = self.metrics_interval_num
+        for i, (img, gt_mask, pred_mask, point, point_label, image_id, score) \
+        in enumerate(zip(imgs, gt_masks, pred_masks, points, point_labels, image_ids, confidence_predictions)):
+            img = img.permute(1,2,0).detach().cpu().numpy()
+            img = augmentation.DeNormalize(img).astype(int)
+            score = score.detach().cpu().numpy()[0][0]
+            # plt.figure(figsize=(10,10))
+            # plt.imshow(img)
+            id = image_id.split('.')[0]
+            pred_mask = pred_mask > 0.0
+            
+            g_mask = gt_mask.unsqueeze(0).unsqueeze(0)
+            iou, f_score, precision, recall = calculate_metrics(pred_mask*1, g_mask*1)
+            # show_mask(pred_mask, plt.gca())
+            new_p = point.int()[0].detach().cpu()
+            point = point.detach().cpu().numpy()
+            self.miou_activation_map[int(new_p[1].item()), int(new_p[0].item()), :] = iou.item()
+            # show_points(point, point_label.detach().cpu().numpy(), plt.gca())
+            # plt.title(f"Mask, IOU: {iou:.3f}, F-score: {f_score:.3f}, precision: {precision:.3f}, recall: {recall:.3f}, Confidence: {score:.3f}", fontsize=12)
+            # plt.axis('off')
+            # filename = f"{new_p[0].item(), new_p[1].item()}_pred.png"
+            # filename = f"finetuned_{id, int(new_p[1].item()), int(new_p[0].item())}_pred.png"
+            # plt.savefig(os.path.join(self.save_base, filename), bbox_inches='tight', pad_inches=0)
+            # plt.close()
+        
+            # plt.figure(figsize=(10,10))
+            # plt.imshow(img)
+            #     # ##mask save
+            # gt_mask = gt_mask.detach().cpu().numpy()
+            
+            # # iou, f_score, precision, recall = calculate_metrics(pred_mask, gt_mask)
+            # show_mask(gt_mask, plt.gca())
+            # show_points(point, point_label.detach().cpu().numpy(), plt.gca())
+            
+            # filename = f"{id}_gt.png"
+            # plt.axis('off')
+            # plt.savefig(os.path.join(self.save_base, filename), bbox_inches='tight', pad_inches=0)
+            # plt.close()
+            
+        # img = img.permute(1,2,0).detach().cpu().numpy()
+        # img = augmentation.DeNormalize(img).astype(int)
+        self.img = img
+        ## validation log 
+        for metric in ['tp', 'fp', 'fn', 'tn']:
+            self.val_metric[metric].append(outputs[metric])
+        # aggregate step metics
+        step_metrics = [torch.cat(list(self.val_metric[metric])) for metric in ['tp', 'fp', 'fn', 'tn']]
+        per_mask_iou = smp.metrics.iou_score(*step_metrics, reduction="micro-imagewise")
+        self.validation_step_outputs.append(per_mask_iou)
+        metrics = {"val_per_mask_iou": per_mask_iou}
+        # self.log_dict(metrics)
+        self.log("val_per_mask_iou", per_mask_iou, sync_dist=True)
+        
+        return metrics
 
+    def on_test_epoch_end(self):
+        print('test_end')
+        # plt.figure(figsize=(10,10))
+        # print(self.img.shape, self.miou_activation_map.shape)
+        # print(self.img.shape, self.miou_activation_map.shape)
+        img = cv2.resize(self.img.astype('float32'), dsize=(1440,1080), interpolation=cv2.INTER_LINEAR).astype('int32')
+        # ## interpolation
+        # act_map = cv2.resize(self.miou_activation_map,
+        #                             dsize=(512,512),
+        #                             interpolation=cv2.INTER_LINEAR)
+        act_map = cv2.resize(self.miou_activation_map, dsize=(1440,1080), interpolation=cv2.INTER_LINEAR)
+        vmax = 0
+        vmin = 1
+        norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
+        colormapping = cm.ScalarMappable(norm=norm, cmap='jet')
+        plt.imshow((act_map * 255).astype(np.uint8), cmap='jet', vmin=0, vmax=1)
+        plt.imshow(img, alpha=0.5)
+        filename = f"activation_map_gt.png"
+        plt.axis('off')
+        ax = plt.gca()
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="2%", pad=0.1)
+        # plt.jet()
+        cbar = plt.colorbar(colormapping, ax=ax, cax=cax) ## 컬러바 삽입
+        # cbar = plt.colorbar(ax=ax, cax=cax) ## 컬러바 삽입
+        
+        plt.savefig(os.path.join(self.save_base, filename), bbox_inches='tight', pad_inches=0)
+        plt.close()
+
+        epoch_average = torch.stack(self.validation_step_outputs).mean()
+        self.log("validation_epoch_average iou", epoch_average, sync_dist=True)
+        self.validation_step_outputs.clear()  # free memory
+    
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_root", type=str, required=True, help="path to the data root")
@@ -389,6 +501,7 @@ def main():
     parser.add_argument("--weight_decay", type=float, default=1e-2, help="weight decay")
     parser.add_argument("--metrics_interval", type=int, default=50, help="interval for logging metrics")
     parser.add_argument("--output_dir", type=str, default=".", help="path to save the model")
+    parser.add_argument("--test_only", action="store_true", help="test_only")
 
     args = parser.parse_args()
 
@@ -402,17 +515,39 @@ def main():
     )
     
     val_dataset = custom_text.CustomText(
-        data_root='../SAM_customizing/data/Custom_data',
+        # data_root='./data/validation' if not args.random_gen else '../SAM_customizing/data/Custom_data' ,
+        data_root = '../SAM_customizing/data/Custom_data' ,
         is_training=False,
         load_memory=False,
         cfg=args,
         transform= augmentation.Augmentation(is_training = False, size=args.image_size, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
     )
-        
+    
     # load the dataset
-    # train_dataset = Coco2MaskDataset(data_root=args.data_root, split="train", image_size=args.image_size)
-    # val_dataset = Coco2MaskDataset(data_root=args.data_root, split="val", image_size=args.image_size)
+    if args.test_only:
+        # test_dataset = custom_text_test.CustomText_test(
+        # test_dataset = custom_text_test_one.CustomText_test_one(
+        #     # data_root='./data/validation',
+        #     data_root='./data/small',
+        #     label_root='./polygon.txt',
+        #     is_training=False,
+        #     load_memory=False,
+        #     cfg=args,
+        #     transform= augmentation.Augmentation(is_training = False, size=args.image_size, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
+        # )
+        test_dataset = custom_text_test_one.CustomText_test_one(
+        # test_dataset = custom_text_test_realdata.CustomText_test_realdata(
+            # data_root='./data/validation',
+            data_root='./data',
+            label_root='./polygon.txt',
+            is_training=False,
+            load_memory=False,
+            cfg=args,
+            transform= augmentation.Augmentation(is_training = False, size=args.image_size, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
+        )
 
+        val_dataset = test_dataset 
+            
     # create the model
     model = SAMFinetuner(
         args.model_type,
@@ -433,7 +568,7 @@ def main():
         LearningRateMonitor(logging_interval='step'),
         ModelCheckpoint(
             dirpath=args.output_dir,
-            filename='{step}-{val_per_mask_iou:.2f}',
+            filename='{step}-{val_per_mask_iou:.2f}', 
             save_last=True,
             save_top_k=1,
             monitor="val_per_mask_iou",
@@ -443,7 +578,8 @@ def main():
         ),
     ]
     trainer = pl.Trainer(
-        strategy='ddp_find_unused_parameters_true' if NUM_GPUS > 1 else None,
+        strategy='ddp_find_unused_parameters_true' if NUM_GPUS > 1 else 'auto',
+        # strategy='auto',
         accelerator=DEVICE,
         devices=NUM_GPUS,
         precision=32,
@@ -454,8 +590,11 @@ def main():
         check_val_every_n_epoch=None,
         num_sanity_val_steps=0
     )
-
-    trainer.fit(model)
+    if args.test_only:
+        trainer.test(model, ckpt_path = './step=24198-val_per_mask_iou=0.98.ckpt', dataloaders=model.val_dataloader())
+        # trainer.test(model, ckpt_path = None, dataloaders=model.val_dataloader())
+    else:
+        trainer.fit(model)
 
 
 if __name__ == "__main__":

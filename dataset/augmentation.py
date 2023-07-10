@@ -260,10 +260,10 @@ class Compose(object):
     def __init__(self, transforms):
         self.transforms = transforms
 
-    def __call__(self, img, pts=None, center_point=None):
+    def __call__(self, img, pts=None, center_point=None, gt_mask=None):
         for t in self.transforms:
-            img, pts, center_point = t(img, pts, center_point)
-        return img, pts, center_point
+            img, pts, center_point, gt_mask = t(img, pts, center_point, gt_mask)
+        return img, pts, center_point, gt_mask
 
 
 class Normalize(object):
@@ -271,12 +271,12 @@ class Normalize(object):
         self.mean = np.array(mean)
         self.std = np.array(std)
 
-    def __call__(self, image, polygons=None, center_point=None):
+    def __call__(self, image, polygons=None, center_point=None, gt_mask=None):
         image = image.astype(np.float32)
         image /= 255.0
         image -= self.mean
         image /= self.std
-        return image, polygons, center_point
+        return image, polygons, center_point, gt_mask
 
 def DeNormalize(image):
     mean=(0.485, 0.456, 0.406)
@@ -537,7 +537,7 @@ class RotatePadding(object):
 
 class SquarePadding(object):
 
-    def __call__(self, image, polygons=None, center_point=None):
+    def __call__(self, image, polygons=None, center_point=None, gt_mask=None):
 
         H, W, _ = image.shape
 
@@ -561,7 +561,14 @@ class SquarePadding(object):
         expand_image[y0:y0+H, x0:x0+W] = image
         image = expand_image
 
-        return image, polygons, center_point
+        if not gt_mask is None:
+            
+            gt_cut = gt_mask[h_index:(h_index+H//9),w_index:(w_index+W//9)]
+            expand_gt = cv2.resize(gt_cut,(padding_size, padding_size))
+            expand_gt[y0:y0+H, x0:x0+W] = gt_mask
+            gt_mask = expand_gt
+        
+        return image, polygons, center_point, gt_mask
 
 
 class RandomImgCropPatch(object):
@@ -879,16 +886,21 @@ class ResizeSquare(object):
 
 
 class ResizeLimitSquare(object):
-    def __init__(self, size=512, ratio=0.6):
+    def __init__(self, size=512, ratio=0.6, is_training=False):
         self.size = size
         self.ratio = ratio
         self.SP = SquarePadding()
+        self.is_training = is_training
 
-    def __call__(self, image, polygons=None, center_point=None):
-        if np.random.random() <= self.ratio:
-            image, polygons, center_point = self.SP(image, polygons, center_point)
+    def __call__(self, image, polygons=None, center_point=None, gt_mask=None):
+        if np.random.random() <= self.ratio and self.is_training:
+            image, polygons, center_point, gt_mask = self.SP(image, polygons, center_point, gt_mask)
         h, w, _ = image.shape
         image = cv2.resize(image, (self.size,self.size))
+        
+        if not gt_mask is None: 
+            gt_mask = cv2.resize(gt_mask, (self.size,self.size))
+        
         scales = np.array([self.size*1.0/ w, self.size*1.0 / h])
 
         if polygons is not None:
@@ -896,7 +908,7 @@ class ResizeLimitSquare(object):
                 polygon.points = polygon.points * scales
                 center_point = center_point * scales
 
-        return image, polygons, center_point
+        return image, polygons, center_point, gt_mask
 
 
 class RandomResizePadding(object):
@@ -976,8 +988,8 @@ class Augmentation(object):
                 Normalize(mean=self.mean, std=self.std),
             ])
             
-    def __call__(self, image, polygons=None, center_point=None):
-        return self.augmentation(image, polygons, center_point)
+    def __call__(self, image, polygons=None, center_point=None, gt_mask=None):
+        return self.augmentation(image, polygons, center_point, gt_mask)
 
 
 class BaseTransform(object):

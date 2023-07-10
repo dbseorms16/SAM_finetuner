@@ -91,6 +91,7 @@ def _build_sam(
                 embedding_dim=prompt_embed_dim,
                 mlp_dim=2048,
                 num_heads=8,
+                name='mask_decoder'
             ),
             transformer_dim=prompt_embed_dim,
             iou_head_depth=3,

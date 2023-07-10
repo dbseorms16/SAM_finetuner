@@ -245,28 +245,33 @@ class TextDataset(object):
         # proposal_points = torch.from_numpy(proposal_points).float()
         # ignore_tags = torch.from_numpy(ignore_tags).int()
 
-        return image, train_mask, center_point, label
+        return image, train_mask, center_point, label, image_id
 
-
-    def get_test_data(self, image, polygons, center_point, image_id=None, image_path=None):
+    def get_test_data(self, image, polygons, center_point, gt_mask=None, label_point=None, image_id=None, image_path=None):
         
         np.random.seed()
         if self.transform:
             #image, polygons = self.transform(image, polygons)
 
-            image, polygons, center_point = self.transform(copy.deepcopy(image), copy.deepcopy(polygons), copy.deepcopy(center_point))
+            image, polygons, center_point, gt_mask = self.transform(copy.deepcopy(image), copy.deepcopy(polygons), copy.deepcopy(center_point), gt_mask)
             
         np.random.seed()
         # # to pytorch channel sequence
         train_mask, tr_mask, \
         distance_field, direction_field, \
         weight_matrix, gt_points, proposal_points, ignore_tags, inst_mask = self.make_text_region(image, polygons)
+        if not gt_mask is None:
+            train_mask = torch.from_numpy(gt_mask).bool()
+            label = torch.from_numpy(label_point).int()
+        else:
+            train_mask = torch.from_numpy(inst_mask).bool()
+            label = torch.from_numpy(np.array([1])).int()
+            
 
         # # to pytorch channel sequence
         image = image.transpose(2, 0, 1)
         image = torch.from_numpy(image).float()
 
-        train_mask = torch.from_numpy(inst_mask).bool()
         # tr_mask = torch.from_numpy(tr_mask).int()
         # weight_matrix = torch.from_numpy(weight_matrix).float()
         # direction_field = torch.from_numpy(direction_field).float()
@@ -275,9 +280,8 @@ class TextDataset(object):
         # proposal_points = torch.from_numpy(proposal_points).float()
         # ignore_tags = torch.from_numpy(ignore_tags).int()
         
-        label = torch.from_numpy(np.array([1])).int()
         
-        return image, train_mask, center_point, label
+        return image, train_mask, center_point, label, image_id
 
         # return image, train_mask, tr_mask, distance_field, \
         #        direction_field, weight_matrix, gt_points, proposal_points, ignore_tags

@@ -9,10 +9,10 @@ from torch import Tensor, nn
 
 import math
 from typing import Tuple, Type
+import os
+import matplotlib.pyplot as plt
 
 from .common import MLPBlock
-from scripts.predict_utils import save_plt
-
 class TwoWayTransformer(nn.Module):
     def __init__(
         self,
@@ -20,6 +20,7 @@ class TwoWayTransformer(nn.Module):
         embedding_dim: int,
         num_heads: int,
         mlp_dim: int,
+        name: str,
         activation: Type[nn.Module] = nn.ReLU,
         attention_downsample_rate: int = 2,
     ) -> None:
@@ -41,7 +42,7 @@ class TwoWayTransformer(nn.Module):
         self.num_heads = num_heads
         self.mlp_dim = mlp_dim
         self.layers = nn.ModuleList()
-
+        self.name = name
         for i in range(depth):
             self.layers.append(
                 TwoWayAttentionBlock(
@@ -86,6 +87,10 @@ class TwoWayTransformer(nn.Module):
         queries = point_embedding
         keys = image_embedding
 
+        # feature = keys.permute(0, 2, 1).view(1, 256, 64, 64)
+        # for a in range(256):
+        # save_plt(feature[0, a], a)
+            
         # Apply transformer blocks and final layernorm
         for layer in self.layers:
             
@@ -103,6 +108,12 @@ class TwoWayTransformer(nn.Module):
         
         queries = queries + attn_out
         queries = self.norm_final_attn(queries)
+
+        feature = keys.permute(0, 2, 1).view(1, 256, 64, 64)
+        
+        # for a in range(256):
+        #     save_plt(feature[0, a], 'att_a'+ str(a))
+            
 
         return queries, keys
 
@@ -153,7 +164,7 @@ class TwoWayAttentionBlock(nn.Module):
         self, queries: Tensor, keys: Tensor, query_pe: Tensor, key_pe: Tensor
     ) -> Tuple[Tensor, Tensor]:
         # Self attention block
-
+          
         if self.skip_first_layer_pe:
             queries = self.self_attn(q=queries, k=queries, v=queries)
         else:
@@ -242,3 +253,14 @@ class Attention(nn.Module):
         out = self.out_proj(out)
 
         return out
+
+def save_plt(image, path=None):
+    if type(image) is torch.Tensor:
+        image = image.detach().cpu().numpy()
+    save_base = os.path.join('./feature_results')
+    plt.figure(figsize=(10,10))
+    plt.imshow(image, cmap='gray')
+    filename = f"{path}.png"
+    
+    plt.savefig(os.path.join(save_base, filename), bbox_inches='tight', pad_inches=0)
+    plt.close()

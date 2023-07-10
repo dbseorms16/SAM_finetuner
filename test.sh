@@ -10,4 +10,5 @@ python finetune.py \
     --steps 1500000 \
     --learning_rate 1.e-5 \
     --weight_decay 0.01 \
-    --metrics_interval 74
+    --metrics_interval 74 \
+    --test_only

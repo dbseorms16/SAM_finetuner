@@ -18,6 +18,9 @@ import math
 from functools import reduce
 
 from .transformer import TwoWayAttentionBlock
+import time
+import os
+import matplotlib.pyplot as plt
 
 class PromptEncoder(nn.Module):
     def __init__(
@@ -136,18 +139,21 @@ class PromptEncoder(nn.Module):
         queries = point_embedding
         keys = image_embedding
         
-        # print('1', feature.shape, queries.shape, keys.shape, point_embedding.shape, image_pe.shape)
+        # 포인트 역 임베딩할려고함
+        # point_embedding = self.pe_layer.forward_with_coords(point_embedding, self.input_image_size)
+        
+        
+        # save_plt(queries[0], 'ex')
         queries, keys = self.modulate_prompt(
                 queries=queries,
                 keys=keys,
                 query_pe=point_embedding,
                 key_pe=image_pe,
             )
-        # torch.Size([1, 2, 256]) torch.Size([1, 4096, 256])
-        # print(self.modulate_prompt.mlp.lin1.weight)
-        ## 바뀐다
-        # print('2', queries.shape, keys.shape)
         point_embedding = point_embedding + queries
+        
+        # save_plt(queries[0], 'after')
+        
         # j_embeddings = self.j_prompt_dropout(self.j_prompt_proj(self.j_prompt_embeddings).expand(points.shape[0], -1, -1))
         # print(self.j_prompt_embeddings)
         # print(self.j_prompt_embeddings.shape)
@@ -303,12 +309,28 @@ class PositionEmbeddingRandom(nn.Module):
     def _pe_encoding(self, coords: torch.Tensor) -> torch.Tensor:
         """Positionally encode points that are normalized to [0,1]."""
         # assuming coords are in [0, 1]^2 square and have d_1 x ... x d_n x 2 shape
+
         coords = 2 * coords - 1
         coords = coords @ self.positional_encoding_gaussian_matrix
         coords = 2 * np.pi * coords
         # outputs d_1 x ... x d_n x C shape
-        return torch.cat([torch.sin(coords), torch.cos(coords)], dim=-1)
+        results =  torch.cat([torch.sin(coords), torch.cos(coords)], dim=-1)
 
+        return results
+    
+    def re_pe_encoding(self, coords: torch.Tensor) -> torch.Tensor:
+        """Positionally encode points that are normalized to [0,1]."""
+        # assuming coords are in [0, 1]^2 square and have d_1 x ... x d_n x 2 shape
+
+        coords = 2 * coords - 1
+        coords = coords @ self.positional_encoding_gaussian_matrix
+        coords = 2 * np.pi * coords
+        # outputs d_1 x ... x d_n x C shape
+        results =  torch.cat([torch.sin(coords), torch.cos(coords)], dim=-1)
+
+        return results
+    
+    
     def forward(self, size: Tuple[int, int]) -> torch.Tensor:
         """Generate positional encoding for a grid of the specified size."""
         h, w = size
@@ -330,3 +352,13 @@ class PositionEmbeddingRandom(nn.Module):
         coords[:, :, 0] = coords[:, :, 0] / image_size[1]
         coords[:, :, 1] = coords[:, :, 1] / image_size[0]
         return self._pe_encoding(coords.to(torch.float))  # B x N x C
+
+def save_plt(image, path=None):
+    if type(image) is torch.Tensor:
+        image = image.detach().cpu().numpy()
+    save_base = os.path.join('./feature_results')
+    plt.figure(figsize=(10,10))
+    plt.imshow(image, cmap='gray')
+    filename = f"{path}.png"
+    plt.savefig(os.path.join(save_base, filename), bbox_inches='tight', pad_inches=0)
+    plt.close()
