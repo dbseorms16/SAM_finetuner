@@ -218,11 +218,11 @@ class TextDataset(object):
                distance_field, direction_field, \
                weight_matrix, gt_points, proposal_points, ignore_tags, inst_mask
 
-    def get_training_data(self, image, polygons, center_point, image_id=None, image_path=None):
+    def get_training_data(self, image, polygons, center_point, image_id=None, image_path=None, extended_poly=None):
         np.random.seed()
         if self.transform:
             #image, polygons = self.transform(image, polygons)
-            image, polygons, center_point = self.transform(copy.deepcopy(image), copy.deepcopy(polygons), copy.deepcopy(center_point))
+            image, polygons, center_point, _ = self.transform(copy.deepcopy(image), copy.deepcopy(polygons), copy.deepcopy(center_point))
 
         train_mask, tr_mask, \
         distance_field, direction_field, \
@@ -235,7 +235,7 @@ class TextDataset(object):
         # train_mask = torch.from_numpy(train_mask).bool()
         train_mask = torch.from_numpy(inst_mask).long()
         label = torch.from_numpy(np.array([1])).int()
-        
+        polygons = torch.from_numpy(np.array(extended_poly)).int()
         
         # tr_mask = torch.from_numpy(tr_mask).float()
         # weight_matrix = torch.from_numpy(weight_matrix).float()
@@ -245,9 +245,9 @@ class TextDataset(object):
         # proposal_points = torch.from_numpy(proposal_points).float()
         # ignore_tags = torch.from_numpy(ignore_tags).int()
 
-        return image, train_mask, center_point, label, image_id
+        return image, train_mask, center_point, label, image_id, polygons
 
-    def get_test_data(self, image, polygons, center_point, gt_mask=None, label_point=None, image_id=None, image_path=None):
+    def get_test_data(self, image, polygons, center_point, gt_mask=None, label_point=None, image_id=None, image_path=None, extended_poly=None):
         
         np.random.seed()
         if self.transform:
@@ -271,6 +271,7 @@ class TextDataset(object):
         # # to pytorch channel sequence
         image = image.transpose(2, 0, 1)
         image = torch.from_numpy(image).float()
+        polygons = torch.from_numpy(np.array(extended_poly)).int()
 
         # tr_mask = torch.from_numpy(tr_mask).int()
         # weight_matrix = torch.from_numpy(weight_matrix).float()
@@ -281,7 +282,7 @@ class TextDataset(object):
         # ignore_tags = torch.from_numpy(ignore_tags).int()
         
         
-        return image, train_mask, center_point, label, image_id
+        return image, train_mask, center_point, label, polygons, image_id
 
         # return image, train_mask, tr_mask, distance_field, \
         #        direction_field, weight_matrix, gt_points, proposal_points, ignore_tags

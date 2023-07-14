@@ -17,7 +17,7 @@ class CustomText_test_realdata(TextDataset):
         self.is_training = is_training
         self.load_memory = load_memory
         self.cfg = cfg
-        self.image_root = os.path.join(data_root, 'small')
+        self.image_root = os.path.join(data_root, 'sample')
         self.gt_root = os.path.join(data_root, 'gt')
         self.image_list = os.listdir(self.image_root)
         self.annotation_list = ['{}'.format(img_name.replace('.jpg', '')) for img_name in self.image_list]
@@ -43,86 +43,178 @@ class CustomText_test_realdata(TextDataset):
 
         self.dict = {
         '1' : {
-            # 'input_point': np.array([[352, 139]]),
-            'input_point': np.array([[354, 392]]),
-            # 'input_point': np.array([[352, 139], [354, 392]]),
-            # 'input_point': np.array([[352, 139], [354, 392]]),
-            # 'label' : np.array([1, 1])
+            'input_point': np.array([[126, 207]]),
             'label' : np.array([1])
             },
         '1_1' : {
-            # 원포인트
-            # 'input_point': np.array([[352, 139]]),
-            'input_point': np.array([[342, 135]]),
+            'input_point': np.array([[524, 243]]),
             'label' : np.array([1])
             },
-        '1_2' : {
-            # 원포인트
-            # 'input_point': np.array([[354, 392]]),
-            'input_point': np.array([[360, 392]]),
-            'label' : np.array([1])
-        },
         '2' : {
-            'input_point': np.array([[172, 165]]),
-            # 'input_point': np.array([[172, 165], [170, 200], [168, 240], [168, 281], [165, 321],
-            #                          [485, 137], [484, 175], [485, 219], [483, 266], [485, 318]]),
-            'label' : np.array([1]),
+            'input_point': np.array([[309, 228]]),
+            'label' : np.array([1])
             },
         '2_1' : {
-            'input_point': np.array([[185, 165]]),
-            'label' : np.array([1])},
+            'input_point': np.array([[110, 264]]),
+            'label' : np.array([1])
+            },
         '2_2' : {
-            'input_point': np.array([[170, 200]]),
+            'input_point': np.array([[487, 224]]),
+            'label' : np.array([1])
+            },
+        '3' : {
+            'input_point': np.array([[110, 64]]),
+            'label' : np.array([1])
+            },
+        '4' : {
+            'input_point': np.array([[29, 61]]),
+            'label' : np.array([1]),
+            },
+        '4_1' : {
+            'input_point': np.array([[239, 125]]),
+            'label' : np.array([1]),
+            },
+        '5' : {
+            'input_point': np.array([[186, 53]]),
             'label' : np.array([1])},
-        '2_3' : {
-            'input_point': np.array([[168, 240]]),
+        '5_1' : {
+            'input_point': np.array([[186, 78]]),
             'label' : np.array([1])},
-        '2_4' : {
-            'input_point': np.array([[163, 275]]),
+        '5_2' : {
+            'input_point': np.array([[186, 106]]),
             'label' : np.array([1])},
-        '2_5' : {
-            'input_point': np.array([[170, 325]]),
+        '6' : {
+            'input_point': np.array([[177, 24]]),
             'label' : np.array([1])},
-        '2_6' : {
-            'input_point': np.array([[495, 137]]),
+        '6_1' : {
+            'input_point': np.array([[177, 58]]),
             'label' : np.array([1])},
-        '2_7' : {
-            'input_point': np.array([[485, 175]]),
+        '7' : {
+            'input_point': np.array([[27, 114]]),
             'label' : np.array([1])},
-        '2_8' : {
-            'input_point': np.array([[485, 219]]),
+        '8' : {
+            'input_point': np.array([[419, 304]]),
             'label' : np.array([1])},
-        '2_9' : {
-            'input_point': np.array([[478, 268]]),
+        '8_1' : {
+            'input_point': np.array([[59, 308]]),
             'label' : np.array([1])},
-        '2_10' : {
-            'input_point': np.array([[417, 315]]),
+        '9' : {
+            'input_point': np.array([[30, 68]]),
             'label' : np.array([1])},
+        '9_1' : {
+            'input_point': np.array([[38, 135]]),
+            'label' : np.array([1])},
+                
+        '10' : {
+            'input_point': np.array([[70, 73]]),
+            'label' : np.array([1])},
+                        
+        '10_1' : {
+            'input_point': np.array([[65, 91]]),
+            'label' : np.array([1])},
+        
+        '10_2' : {
+            'input_point': np.array([[65, 110]]),
+            'label' : np.array([1])},
+        
+        'f_1' : {
+            'input_point': np.array([[65, 110]]),
+            'label' : np.array([1])},
+        'f_2' : {
+            'input_point': np.array([[65, 110]]),
+            'label' : np.array([1])},
+        'f_3' : {
+            'input_point': np.array([[65, 110]]),
+            'label' : np.array([1])},
+        'f_4' : {
+            'input_point': np.array([[65, 110]]),
+            'label' : np.array([1])},
+        'f_5' : {
+            'input_point': np.array([[65, 110]]),
+            'label' : np.array([1])},
+        }
+        # self.dict = {
+        # '1' : {
+        #     # 'input_point': np.array([[352, 139]]),
+        #     'input_point': np.array([[354, 392]]),
+        #     # 'input_point': np.array([[352, 139], [354, 392]]),
+        #     # 'input_point': np.array([[352, 139], [354, 392]]),
+        #     # 'label' : np.array([1, 1])
+        #     'label' : np.array([1])
+        #     },
+        # '1_1' : {
+        #     # 원포인트
+        #     # 'input_point': np.array([[352, 139]]),
+        #     'input_point': np.array([[342, 135]]),
+        #     'label' : np.array([1])
+        #     },
+        # '1_2' : {
+        #     # 원포인트
+        #     # 'input_point': np.array([[354, 392]]),
+        #     'input_point': np.array([[360, 392]]),
+        #     'label' : np.array([1])
+        # },
+        # '2' : {
+        #     'input_point': np.array([[172, 165]]),
+        #     # 'input_point': np.array([[172, 165], [170, 200], [168, 240], [168, 281], [165, 321],
+        #     #                          [485, 137], [484, 175], [485, 219], [483, 266], [485, 318]]),
+        #     'label' : np.array([1]),
+        #     },
+        # '2_1' : {
+        #     'input_point': np.array([[185, 165]]),
+        #     'label' : np.array([1])},
+        # '2_2' : {
+        #     'input_point': np.array([[170, 200]]),
+        #     'label' : np.array([1])},
+        # '2_3' : {
+        #     'input_point': np.array([[168, 240]]),
+        #     'label' : np.array([1])},
+        # '2_4' : {
+        #     'input_point': np.array([[163, 275]]),
+        #     'label' : np.array([1])},
+        # '2_5' : {
+        #     'input_point': np.array([[170, 325]]),
+        #     'label' : np.array([1])},
+        # '2_6' : {
+        #     'input_point': np.array([[495, 137]]),
+        #     'label' : np.array([1])},
+        # '2_7' : {
+        #     'input_point': np.array([[485, 175]]),
+        #     'label' : np.array([1])},
+        # '2_8' : {
+        #     'input_point': np.array([[485, 219]]),
+        #     'label' : np.array([1])},
+        # '2_9' : {
+        #     'input_point': np.array([[478, 268]]),
+        #     'label' : np.array([1])},
+        # '2_10' : {
+        #     'input_point': np.array([[417, 315]]),
+        #     'label' : np.array([1])},
                                                         
         
-        '3' : {
-            # 'input_point': np.array([[681, 308], [684, 580]]),
-            'input_point': np.array([[681, 308]]),
-            # 'label' : np.array([1, 1])
-            'label' : np.array([1])
-            },
-        '3_1' : {
-            'input_point': np.array([[681, 308]]),
-            'label' : np.array([1])
-            },
-        '3_2' : {
-            'input_point': np.array([[689, 580]]),
-            'label' : np.array([1])
-            },
-        # '3_1' : {
-        #     'input_point': np.array([[684, 580]]),
+        # '3' : {
+        #     # 'input_point': np.array([[681, 308], [684, 580]]),
+        #     'input_point': np.array([[681, 308]]),
+        #     # 'label' : np.array([1, 1])
+        #     'label' : np.array([1])
         #     },
-        '4' : {
-            'input_point': np.array([[750, 540]]),
-            'label' : np.array([1])},
-        '5' : {
-            'input_point': np.array([[766, 530]]),
-            'label' : np.array([1])}}
+        # '3_1' : {
+        #     'input_point': np.array([[681, 308]]),
+        #     'label' : np.array([1])
+        #     },
+        # '3_2' : {
+        #     'input_point': np.array([[689, 580]]),
+        #     'label' : np.array([1])
+        #     },
+        # # '3_1' : {
+        # #     'input_point': np.array([[684, 580]]),
+        # #     },
+        # '4' : {
+        #     'input_point': np.array([[750, 540]]),
+        #     'label' : np.array([1])},
+        # '5' : {
+        #     'input_point': np.array([[766, 530]]),
+        #     'label' : np.array([1])}}
         
     def load_img(self, img_root, image_id):
         image_path = os.path.join(img_root, image_id)
@@ -144,7 +236,7 @@ class CustomText_test_realdata(TextDataset):
         center_point = self.dict[filename]['input_point']
         label_point = self.dict[filename]['label']
         data = self.load_img(self.image_root, image_id)
-        gt_mask = np.load(self.gt_root + f'/gt_{filename}.npy').astype('float32')
+        # gt_mask = np.load(self.gt_root + f'/gt_{filename}.npy').astype('float32')
         
         polygons = self.polygonlist['0937.jpg']
         
@@ -153,9 +245,9 @@ class CustomText_test_realdata(TextDataset):
         
         h, w, c = image.shape
                                 
-        polygons = self.polygon_extender(polygons, num_poly=16)
+        polygons, extended_poly = self.polygon_extender(polygons, num_poly=16)
         
-        return self.get_test_data(image, polygons, center_point, gt_mask, label_point, image_id=data["image_id"], image_path=data["image_path"])
+        return self.get_test_data(image, polygons, center_point, image_id=data["image_id"], image_path=data["image_path"], extended_poly=extended_poly)
 
     def __len__(self):
         return len(self.image_list)
@@ -192,7 +284,7 @@ class CustomText_test_realdata(TextDataset):
         new = n1 + n2 + n3 + n4
         polygons.append(TextInstance(new, 'c', "**"))
 
-        return polygons
+        return polygons, new
     
 def prefix(s):
     s_1 = s.split(',')

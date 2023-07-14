@@ -817,7 +817,7 @@ class RandomResizeScale(object):
         self.size = size
         self.ratio = ratio
 
-    def __call__(self, image, polygons=None, center_point=None):
+    def __call__(self, image, polygons=None, center_point=None, gt_mask=None):
 
         aspect_ratio = np.random.uniform(self.ratio[0], self.ratio[1])
         h, w, _ = image.shape
@@ -825,13 +825,16 @@ class RandomResizeScale(object):
         aspect_ratio = scales * aspect_ratio
         aspect_ratio = int(w * aspect_ratio)*1.0/w
         image = cv2.resize(image, (int(w * aspect_ratio), int(h*aspect_ratio)))
+        if gt_mask is not None:
+            gt_mask = cv2.resize(gt_mask, (int(w * aspect_ratio), int(h*aspect_ratio)))
+        
         scales = np.array([aspect_ratio, aspect_ratio])
         if polygons is not None:
             for polygon in polygons:
                 polygon.points = polygon.points * scales
                 center_point = center_point * scales
 
-        return image, polygons, center_point
+        return image, polygons, center_point, gt_mask
 
 
 class Resize(object):

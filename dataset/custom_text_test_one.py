@@ -18,7 +18,7 @@ class CustomText_test_one(TextDataset):
         self.load_memory = load_memory
         self.cfg = cfg
         # self.image_root = os.path.join(data_root)
-        self.image_root = os.path.join(data_root, 'small')
+        self.image_root = os.path.join(data_root,'face')
         self.gt_root = os.path.join(data_root, 'gt')
         
         self.image_list = os.listdir(self.image_root)
@@ -46,18 +46,19 @@ class CustomText_test_one(TextDataset):
         # startx, starty = polygon[0][0], polygon[0][1]
         # lastx, lasty = polygon[1][0], polygon[2][1]
         # large_y = polygon[2][1]
-        startx, starty = 480, 200
-        lastx, lasty = 1210, 870
+        startx, starty = 50, 50
+        lastx, lasty = 80, 80
         
         # startx, starty = 500, 450
         # lastx, lasty = 550, 500
                 
         self.center_point = []
-        xstep = 5
-        ystep = 5
-        for x in range(startx, lastx + xstep, xstep):
-            for y in range(starty, lasty + ystep, ystep):
-                self.center_point.append(np.array([[x, y]]))
+        # xstep = 10
+        # ystep = 10
+        # for x in range(startx, lastx + xstep, xstep):
+        #     for y in range(starty, lasty + ystep, ystep):
+        #         self.center_point.append(np.array([[x, y]]))
+        self.center_point.append(np.array([[136, 135]]))
         
         # for x in range(startx, startx + 30, xstep):
         #     for y in range(starty, starty + 30, ystep):
@@ -83,7 +84,7 @@ class CustomText_test_one(TextDataset):
         center_point = self.center_point[item]
         # image_id = self.image_list[item]
         # data = self.load_img(self.image_root, '0937.jpg')
-        data = self.load_img(self.image_root, '4.jpg')
+        data = self.load_img(self.image_root, 'f_2.jpg')
         polygons = self.polygonlist['0937.jpg']
         gt_mask = np.load(self.gt_root + f'/gt_4.npy').astype('float32')
         label_point = np.array([1])
@@ -93,10 +94,10 @@ class CustomText_test_one(TextDataset):
         h, w, c = image.shape
         # center_point = np.array([[int(w//2), int(h//2)]])
                                 
-        polygons = self.polygon_extender(polygons, num_poly=16)
+        polygons, extended_poly = self.polygon_extender(polygons, num_poly=16)
         
         # return self.get_test_data(image, polygons, center_point, image_id=data["image_id"], image_path=data["image_path"])
-        return self.get_test_data(image, polygons, center_point, gt_mask, label_point, image_id=data["image_id"], image_path=data["image_path"])
+        return self.get_test_data(image, polygons, center_point, gt_mask, label_point, image_id=data["image_id"], image_path=data["image_path"], extended_poly=extended_poly)
 
     def __len__(self):
         return len(self.center_point)
@@ -133,7 +134,7 @@ class CustomText_test_one(TextDataset):
         new = n1 + n2 + n3 + n4
         polygons.append(TextInstance(new, 'c', "**"))
 
-        return polygons
+        return polygons, new
     
 def prefix(s):
     s_1 = s.split(',')

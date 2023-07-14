@@ -75,16 +75,17 @@ class CustomText(TextDataset):
         image_shape = image.shape[:2]
         # SAM preprocessing
         # image = self.SAM_transform.apply_image(image)
-        polygons = self.polygon_extender(polygons, num_poly=16)
+        polygons, extended_poly = self.polygon_extender(polygons, num_poly=2)
         
         if self.is_training:
             return self.get_training_data(image, polygons, center_point,
-                                          image_id=data["image_id"], image_path=data["image_path"])
+                                          image_id=data["image_id"], image_path=data["image_path"], extended_poly=extended_poly)
             
             # return self.get_training_data(data["image"], data["polygons"],
             #                               image_id=data["image_id"], image_path=data["image_path"])
         else:
-            return self.get_test_data(image, polygons, center_point, image_id=data["image_id"], image_path=data["image_path"])
+            return self.get_test_data(image, polygons, center_point, image_id=data["image_id"], image_path=data["image_path"], 
+                                      extended_poly=extended_poly)
 
     def __len__(self):
         return len(self.image_list)
@@ -121,4 +122,4 @@ class CustomText(TextDataset):
         new = n1 + n2 + n3 + n4
         polygons.append(TextInstance(new, 'c', "**"))
 
-        return polygons
+        return polygons, new
