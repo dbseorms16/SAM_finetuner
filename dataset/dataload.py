@@ -245,7 +245,7 @@ class TextDataset(object):
         # proposal_points = torch.from_numpy(proposal_points).float()
         # ignore_tags = torch.from_numpy(ignore_tags).int()
 
-        return image, train_mask, center_point, label, image_id, polygons
+        return image, train_mask, center_point, label, polygons, image_id
 
     def get_test_data(self, image, polygons, center_point, gt_mask=None, label_point=None, image_id=None, image_path=None, extended_poly=None):
         
@@ -264,6 +264,7 @@ class TextDataset(object):
             train_mask = torch.from_numpy(gt_mask).bool()
             label = torch.from_numpy(label_point).int()
         else:
+            # train_mask = torch.from_numpy(inst_mask).bool()
             train_mask = torch.from_numpy(inst_mask).bool()
             label = torch.from_numpy(np.array([1])).int()
             
@@ -272,20 +273,38 @@ class TextDataset(object):
         image = image.transpose(2, 0, 1)
         image = torch.from_numpy(image).float()
         polygons = torch.from_numpy(np.array(extended_poly)).int()
-
-        # tr_mask = torch.from_numpy(tr_mask).int()
-        # weight_matrix = torch.from_numpy(weight_matrix).float()
-        # direction_field = torch.from_numpy(direction_field).float()
-        # distance_field = torch.from_numpy(distance_field).float()
-        # gt_points = torch.from_numpy(gt_points).float()
-        # proposal_points = torch.from_numpy(proposal_points).float()
-        # ignore_tags = torch.from_numpy(ignore_tags).int()
         
         
         return image, train_mask, center_point, label, polygons, image_id
 
-        # return image, train_mask, tr_mask, distance_field, \
-        #        direction_field, weight_matrix, gt_points, proposal_points, ignore_tags
+    def get_test_data_one_image(self, image, polygons, center_point, gt_mask=None, label_point=None, image_id=None, image_path=None, extended_poly=None):
+        
+        np.random.seed()
+        if self.transform:
+            image, polygons, center_point, gt_mask = self.transform(copy.deepcopy(image), copy.deepcopy(polygons), copy.deepcopy(center_point), gt_mask)
+            
+        np.random.seed()
+        if not gt_mask is None:
+            train_mask = torch.from_numpy(gt_mask).bool()
+            label = torch.from_numpy(label_point).int()
+        else:
+            mask_zeros = np.zeros(image.shape[:2], np.uint8)
+            inst_mask = mask_zeros.copy()
+            for idx, polygon in enumerate(polygons):
+                if idx >= cfg.max_annotation:
+                    break
+                cv2.fillPoly(inst_mask, [polygon.points.astype(np.int32)], color=(1,))
+            train_mask = torch.from_numpy(inst_mask).bool()
+            label = torch.from_numpy(np.array([1])).int()
+            
+
+        # # to pytorch channel sequence
+        image = image.transpose(2, 0, 1)
+        image = torch.from_numpy(image).float()
+        polygons = torch.from_numpy(np.array(extended_poly)).int()
+        
+        
+        return image, train_mask, center_point, label, polygons, image_id
     
     def get_test_data_only_image(self, image, polygons, center_point, num_poly,image_id=None, image_path=None):
         

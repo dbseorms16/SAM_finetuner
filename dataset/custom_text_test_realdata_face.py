@@ -10,17 +10,15 @@ from PIL import ImageEnhance, Image
 import random
 from segment_anything.utils.transforms import ResizeLongestSide
 
-class CustomText_test_one(TextDataset):
+class CustomText_test_realdata(TextDataset):
     def __init__(self, data_root, label_root,cfg=None, is_training=True, load_memory=False, transform=None, ignore_list=None):
         super().__init__(transform, is_training)
         self.data_root = data_root
         self.is_training = is_training
         self.load_memory = load_memory
         self.cfg = cfg
-        # self.image_root = os.path.join(data_root)
-        self.image_root = os.path.join(data_root,'CelebA-HQ-img')
-        self.gt_root = os.path.join(data_root,'CelebAMask-HQ-mask-anno')
-        
+        self.image_root = os.path.join(data_root, 'CelebA-HQ-img')
+        self.gt_root = os.path.join(data_root, 'CelebAMask-HQ-mask-anno')
         self.image_list = os.listdir(self.image_root)
         self.annotation_list = ['{}'.format(img_name.replace('.jpg', '')) for img_name in self.image_list]
         # self.augmentation = Augmentation(size=cfg.input_size, mean=cfg.means, std=cfg.stds)
@@ -43,27 +41,7 @@ class CustomText_test_one(TextDataset):
         txt.close()
         polygon = self.polygonlist['0937.jpg']
 
-        # startx, starty = polygon[0][0], polygon[0][1]
-        # lastx, lasty = polygon[1][0], polygon[2][1]
-        # large_y = polygon[2][1]
-        startx, starty = 0, 0
-        lastx, lasty = 1000, 1000
         
-        # startx, starty = 500, 450
-        # lastx, lasty = 550, 500
-                
-        self.center_point = []
-        xstep = 5
-        ystep = 5
-        for x in range(startx, lastx, xstep):
-            for y in range(starty, lasty, ystep):
-                self.center_point.append(np.array([[x, y]]))
-        
-        # for x in range(startx, startx + 30, xstep):
-        #     for y in range(starty, starty + 30, ystep):
-        #         self.center_point.append(np.array([[x, y]]))
-    
-                
     def load_img(self, img_root, image_id):
         image_path = os.path.join(img_root, image_id)
 
@@ -79,32 +57,27 @@ class CustomText_test_one(TextDataset):
         return data
 
     def __getitem__(self, item):
-
-        center_point = self.center_point[item]
-        # image_id = self.image_list[item]
-        # data = self.load_img(self.image_root, '0937.jpg')
-        data = self.load_img(self.image_root, '0.jpg')
+        image_id = self.image_list[item]
+        filename = image_id.split('.')[0]
+        center_point = self.dict[filename]['input_point']
+        label_point = self.dict[filename]['label']
+        data = self.load_img(self.image_root, image_id)
+        gt_mask = self.load_img(self.image_root, image_id)
+        # gt_mask = np.load(self.gt_root + f'/gt_{filename}.npy').astype('float32')
         
-        image_path = os.path.join(self.gt_root+'/0',  '00000_skin.png')
-        gt_mask = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE).astype('float32')
-
         polygons = self.polygonlist['0937.jpg']
-        # gt_mask = np.load(self.gt_root + f'/gt_4.npy').astype('float32')
-        label_point = np.array([1])
+        
         image = np.array(data["image"])
-        image = cv2.resize(image, dsize=(1024,1024))
-        gt_mask = cv2.resize(gt_mask, dsize=(1024,1024))
         image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+        
         h, w, c = image.shape
-        # center_point = np.array([[int(w//2), int(h//2)]])
                                 
         polygons, extended_poly = self.polygon_extender(polygons, num_poly=16)
         
-        # return self.get_test_data(image, polygons, center_point, image_id=data["image_id"], image_path=data["image_path"])
-        return self.get_test_data(image, polygons, center_point, gt_mask, label_point, image_id=data["image_id"], image_path=data["image_path"], extended_poly=extended_poly)
+        return self.get_test_data(image, polygons, center_point, image_id=data["image_id"], image_path=data["image_path"], extended_poly=extended_poly)
 
     def __len__(self):
-        return len(self.center_point)
+        return len(self.image_list)
     
     def poly(self, s, e, num_poly):
         nps = []

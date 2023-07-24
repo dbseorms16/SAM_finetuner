@@ -95,7 +95,7 @@ class MaskDecoder(nn.Module):
           torch.Tensor: batched predicted masks
           torch.Tensor: batched predictions of mask quality
         """
-        masks, iou_pred, attent_feature, pred_poly = self.predict_masks(
+        masks, iou_pred, pred_poly = self.predict_masks(
             image_embeddings=image_embeddings,
             image_pe=image_pe,
             sparse_prompt_embeddings=sparse_prompt_embeddings,
@@ -111,7 +111,7 @@ class MaskDecoder(nn.Module):
         masks = masks[:, mask_slice, :, :]
         iou_pred = iou_pred[:, mask_slice]
         # Prepare output
-        return masks, iou_pred, attent_feature, pred_poly
+        return masks, iou_pred, pred_poly
 
     def predict_masks(
         self,
@@ -138,18 +138,14 @@ class MaskDecoder(nn.Module):
         iou_token_out = hs[:, 0, :]
         mask_tokens_out = hs[:, 1 : (1 + self.num_mask_tokens), :]
 
-        coords_torch
         # Upscale mask embeddings and predict masks using the mask tokens
-        attent_feature = src.transpose(1, 2).view(c, h, w)
         src = src.transpose(1, 2).view(b, c, h, w)
         
         #### point prediction
         img_poly =  torch.zeros((b, 64, 2)).to(src.device)
         ind = torch.from_numpy(np.array([0])).to(src.device)
-        
         node_feature = get_node_feature(src, img_poly=img_poly, ind=ind, h=h, w=w)
         i_poly = self.evolve_gcn(node_feature)
-        # if self.is_training:
         pred_poly = torch.clamp(i_poly, 0, w-1)
         # else:
         # pred_poly[:, :, 0] = torch.clamp(i_poly[:, :, 0], 0, w - 1)
@@ -168,7 +164,7 @@ class MaskDecoder(nn.Module):
         # Generate mask quality predictions
         iou_pred = self.iou_prediction_head(iou_token_out)
 
-        return masks, iou_pred, attent_feature, pred_poly
+        return masks, iou_pred, pred_poly
 
 def get_node_feature(cnn_feature, img_poly, ind, h, w):
     img_poly = img_poly.clone().float()
@@ -177,9 +173,11 @@ def get_node_feature(cnn_feature, img_poly, ind, h, w):
 
     batch_size = cnn_feature.size(0)
     gcn_feature = torch.zeros([img_poly.size(0), cnn_feature.size(1), img_poly.size(1)]).to(img_poly.device)
+
     for i in range(batch_size):
         poly = img_poly[ind == i].unsqueeze(0)
-        gcn_feature[ind == i] = torch.nn.functional.grid_sample(cnn_feature[i:i + 1], poly)[0].permute(1, 0, 2)
+        results = torch.nn.functional.grid_sample(cnn_feature[i:i + 1], poly, align_corners=False)[0].permute(1, 0, 2)
+        gcn_feature[ind == i] = results
     return gcn_feature
 
 
@@ -210,14 +208,11 @@ class Transformer(nn.Module):
 
     def forward(self, x):
         x = self.bn0(x)
-
         x1 = x.permute(0, 2, 1)
-        # x1 = self.pos_embedding(x1)
         x1 = self.transformer(x1)
         x1 = x1.permute(0, 2, 1)
 
         x = torch.cat([x1, self.conv1(x)], dim=1)
-        # x = x1+self.conv1(x)
         pred = self.prediction(x)
 
         return pred

@@ -10,7 +10,7 @@ from PIL import ImageEnhance, Image
 import random
 from segment_anything.utils.transforms import ResizeLongestSide
 
-class CustomText_test_one(TextDataset):
+class IOU_activation_one_image(TextDataset):
     def __init__(self, data_root, label_root,cfg=None, is_training=True, load_memory=False, transform=None, ignore_list=None):
         super().__init__(transform, is_training)
         self.data_root = data_root
@@ -18,8 +18,9 @@ class CustomText_test_one(TextDataset):
         self.load_memory = load_memory
         self.cfg = cfg
         # self.image_root = os.path.join(data_root)
-        self.image_root = os.path.join(data_root,'CelebA-HQ-img')
-        self.gt_root = os.path.join(data_root,'CelebAMask-HQ-mask-anno')
+        # self.image_root = os.path.join(data_root, 'small')
+        self.image_root = os.path.join(data_root, 'validation')
+        self.gt_root = os.path.join(data_root, 'gt')
         
         self.image_list = os.listdir(self.image_root)
         self.annotation_list = ['{}'.format(img_name.replace('.jpg', '')) for img_name in self.image_list]
@@ -29,6 +30,8 @@ class CustomText_test_one(TextDataset):
             self.datas = list()
             for item in range(len(self.image_list)):
                 self.datas.append(self.load_img(item))
+                
+        
         txt = open(label_root, 'r')
         self.polygonlist = {}
         for line in txt.readlines():
@@ -41,20 +44,16 @@ class CustomText_test_one(TextDataset):
             polygon = [s_1, s_2, s_3, s_4]
             self.polygonlist[f_name] = polygon
         txt.close()
-        polygon = self.polygonlist['0937.jpg']
-
-        # startx, starty = polygon[0][0], polygon[0][1]
-        # lastx, lasty = polygon[1][0], polygon[2][1]
-        # large_y = polygon[2][1]
-        startx, starty = 0, 0
-        lastx, lasty = 1000, 1000
         
-        # startx, starty = 500, 450
-        # lastx, lasty = 550, 500
+        
+
+        
+        startx, starty = 500, 500
+        lastx, lasty = 700, 700
                 
         self.center_point = []
-        xstep = 5
-        ystep = 5
+        xstep = 2
+        ystep = 2
         for x in range(startx, lastx, xstep):
             for y in range(starty, lasty, ystep):
                 self.center_point.append(np.array([[x, y]]))
@@ -62,6 +61,29 @@ class CustomText_test_one(TextDataset):
         # for x in range(startx, startx + 30, xstep):
         #     for y in range(starty, starty + 30, ystep):
         #         self.center_point.append(np.array([[x, y]]))
+        filename = '0937.jpg'
+        data = self.load_img(self.image_root, filename)
+        # gt_mask = np.load(self.gt_root + f'/gt_4.npy').astype('float32')
+        
+        self.image_id = data["image_id"]
+        self.image_path = data["image_path"]
+        image = np.array(data["image"])
+        image = cv2.resize(image, dsize=(1024,1024))
+        # self.gt_mask = cv2.resize(gt_mask, dsize=(1024,1024))
+        self.image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+        
+        
+        polygons = self.polygonlist['0937.jpg']
+        polygons, extended_poly = self.polygon_extender(polygons, num_poly=16)
+        self.polygons = polygons
+        self.extended_poly = extended_poly
+        mask_zeros = np.zeros(image.shape[:2], np.uint8)
+        inst_mask = mask_zeros.copy()
+        for idx, polygon in enumerate(polygons):
+            if idx >= 64:
+                break
+            cv2.fillPoly(inst_mask, [polygon.points.astype(np.int32)], color=(1,))
+        self.gt_mask = inst_mask
     
                 
     def load_img(self, img_root, image_id):
@@ -81,27 +103,13 @@ class CustomText_test_one(TextDataset):
     def __getitem__(self, item):
 
         center_point = self.center_point[item]
-        # image_id = self.image_list[item]
-        # data = self.load_img(self.image_root, '0937.jpg')
-        data = self.load_img(self.image_root, '0.jpg')
-        
-        image_path = os.path.join(self.gt_root+'/0',  '00000_skin.png')
-        gt_mask = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE).astype('float32')
-
-        polygons = self.polygonlist['0937.jpg']
-        # gt_mask = np.load(self.gt_root + f'/gt_4.npy').astype('float32')
         label_point = np.array([1])
-        image = np.array(data["image"])
-        image = cv2.resize(image, dsize=(1024,1024))
-        gt_mask = cv2.resize(gt_mask, dsize=(1024,1024))
-        image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
-        h, w, c = image.shape
-        # center_point = np.array([[int(w//2), int(h//2)]])
-                                
-        polygons, extended_poly = self.polygon_extender(polygons, num_poly=16)
         
-        # return self.get_test_data(image, polygons, center_point, image_id=data["image_id"], image_path=data["image_path"])
-        return self.get_test_data(image, polygons, center_point, gt_mask, label_point, image_id=data["image_id"], image_path=data["image_path"], extended_poly=extended_poly)
+        gt_mask = self.gt_mask
+        image = self.image
+
+        return self.get_test_data_one_image(image, self.polygons, center_point, gt_mask, label_point, \
+            image_id=self.image_id, image_path=self.image_path, extended_poly=self.extended_poly)
 
     def __len__(self):
         return len(self.center_point)

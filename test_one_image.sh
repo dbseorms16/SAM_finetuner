@@ -1,4 +1,4 @@
-python finetune.py \
+python finetune_one_image.py \
     --data_root ./dataset_name \
     --model_type vit_h \
     --checkpoint_path ../SAM_customizing/sam_vit_h.pth \

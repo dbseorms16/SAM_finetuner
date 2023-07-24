@@ -33,17 +33,15 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 sys.path.append("./")
 from SAM import sam_model_registry
 from SAM.utils.transforms import ResizeLongestSide
-from dataset import custom_text, augmentation, custom_text_test, custom_text_test_one, custom_text_test_realdata
+from dataset import custom_text, augmentation, custom_text_test, custom_text_test_one, custom_text_test_realdata, IOU_activation_one_image
 import time
 from numpy import array, argwhere
-from imantics import Polygons, Mask
-from scipy.spatial import ConvexHull
+
 NUM_GPUS = torch.cuda.device_count()
 # NUM_GPUS = 1
 DEVICE = 'cuda'
 NUM_WORKERS = 0  # https://github.com/pytorch/pytorch/issues/42518
 
-from time import time
 
 # Source: https://github.com/facebookresearch/detectron2/blob/main/detectron2/utils/comm.py
 def get_world_size():
@@ -160,7 +158,9 @@ class SAMFinetuner(pl.LightningModule):
         self.metrics_interval_num = 0
         self.miou_activation_map = np.zeros((1024,1024,1), dtype=float)
         self.img = np.zeros((1024,1024,3), dtype=float)
-        self.PolyMatchingLoss = PolyMatchingLoss(64, DEVICE)
+        # self.PolyMatchingLoss = PolyMatchingLoss(64, DEVICE)
+        self.batch_num = 1
+        self.features = None
         
 
     def forward(self, batch):
@@ -170,8 +170,14 @@ class SAMFinetuner(pl.LightningModule):
         point_labels = batch[3]
         gt_polygons = batch[4]
         _, _, H, W = imgs.shape
-        features = self.model.image_encoder(imgs)
-        ###
+        if self.batch_num == 1:
+            # start = time.time()
+            self.features = self.model.image_encoder(imgs)
+            # end = time.time()
+            # print('embeddding image:{:.5f}'.format(end - start))
+        self.batch_num += 1
+
+        features = self.features
         num_masks = imgs.shape[0]
 
         loss_focal = loss_dice = loss_iou = point_loss = 0.
@@ -186,7 +192,7 @@ class SAMFinetuner(pl.LightningModule):
             coords_torch, labels_torch = coords_torch[None, :, :], labels_torch[None, :]
             
             point = (coords_torch, labels_torch)
-            
+            # start = time.time()
             sparse_embeddings, dense_embeddings = self.model.prompt_encoder(
                 feature=feature,
                 points=point,
@@ -194,6 +200,11 @@ class SAMFinetuner(pl.LightningModule):
                 masks=None,
                 tuned_prompt=None
             )
+            
+            # end = time.time()
+            # print('prompt encoding:{:.5f}'.format(end - start))
+            
+            # start = time.time()
             
             # Predict masks
             low_res_masks, iou_predictions, pred_poly = self.model.mask_decoder(
@@ -204,7 +215,13 @@ class SAMFinetuner(pl.LightningModule):
                 multimask_output=False,
                 coords_torch=coords_torch
             )
+            
+            # end = time.time()
+            # print('Predict mask:{:.5f}'.format(end - start))
+            
 
+
+            start = time.time()
             # Upscale the masks to the original image resolution
             masks = F.interpolate(
                 low_res_masks,
@@ -213,10 +230,14 @@ class SAMFinetuner(pl.LightningModule):
                 align_corners=False,
             )
             
+            # end = time.time()
+            # print('interpolate mask:{:.5f}'.format(end - start))
+            
+            
             predictions.append(masks)
             confidence_predictions.append(iou_predictions)
-            
-            
+        
+            # Compute the iou between the predicted masks and the ground truth masks
             batch_tp, batch_fp, batch_fn, batch_tn = smp.metrics.get_stats(
                 masks,
                 gt_mask.unsqueeze(0).unsqueeze(0),
@@ -231,7 +252,7 @@ class SAMFinetuner(pl.LightningModule):
             
             pred_poly = pred_poly.permute(0, 2, 1)
             gt_polygon =  gt_polygon.unsqueeze(0)
-            point_loss += (self.PolyMatchingLoss(pred_poly, gt_polygon) / num_masks) * 0.0001
+            # point_loss += (self.PolyMatchingLoss(pred_poly, gt_polygon) / num_masks) * 0.0001
             
             loss_focal += sigmoid_focal_loss(masks, gt_mask.float(), num_masks)
             loss_dice += dice_loss(masks, gt_mask.float(), num_masks)
@@ -241,12 +262,11 @@ class SAMFinetuner(pl.LightningModule):
             fn.append(batch_fn)
             tn.append(batch_tn)
         return {
-            # 'loss': 20. * loss_focal + loss_dice + loss_iou,  # SAM default loss
-            'loss': 20. * loss_focal + loss_dice + loss_iou + point_loss,  # SAM default loss
+            'loss': 20. * loss_focal + loss_dice + loss_iou,  # SAM default loss
             'loss_focal': loss_focal,
             'loss_dice': loss_dice,
             'loss_iou': loss_iou,
-            'point_loss': point_loss,
+            # 'point_loss': point_loss,
             'predictions': predictions,
             'confidence_predictions': confidence_predictions,
             'tp': torch.cat(tp),
@@ -271,7 +291,7 @@ class SAMFinetuner(pl.LightningModule):
             "loss_focal": outputs["loss_focal"],
             "loss_dice": outputs["loss_dice"],
             "loss_iou": outputs["loss_iou"],
-            "point_loss": outputs["point_loss"],
+            # "point_loss": outputs["point_loss"],
             "train_per_mask_iou": per_mask_iou,
         }
         self.log_dict(metrics, prog_bar=True, rank_zero_only=True)
@@ -289,43 +309,6 @@ class SAMFinetuner(pl.LightningModule):
         pred_masks = outputs['predictions']
         outputs.pop("confidence_predictions")
         outputs.pop("predictions")
-        num = self.metrics_interval_num
-        for i, (img, gt_mask, pred_mask, point, point_label) in enumerate(zip(imgs, gt_masks, pred_masks, points, point_labels)):
-            img = img.permute(1,2,0).detach().cpu().numpy()
-            img = augmentation.DeNormalize(img).astype(int)
-            
-            plt.figure(figsize=(10,10))
-            plt.imshow(img)
-            # ##mask save
-            # pred_mask = pred_mask.squeeze(0).squeeze(0).detach().cpu().numpy().astype(int)
-            # pred_mask = pred_mask.detach().cpu().numpy().astype(int)
-            pred_mask = pred_mask > 0.0
-
-            # # iou, f_score, precision, recall = calculate_metrics(pred_mask, gt_mask)
-            show_mask(pred_mask, plt.gca())
-            show_points(point.detach().cpu().numpy(), point_label.detach().cpu().numpy(), plt.gca())
-            
-            # # plt.title(f"Mask {i+1}, IOU: {iou:.3f}, F-score: {f_score:.3f}, precision: {precision:.3f}, recall: {recall:.3f}, Confidence: {score:.3f}", fontsize=12)
-            # # plt.axis('off')
-            filename = f"{num}_pred_{i}.png"
-            plt.savefig(os.path.join(self.save_base, filename), bbox_inches='tight', pad_inches=0)
-            plt.close()
-            
-            
-            plt.figure(figsize=(10,10))
-            plt.imshow(img)
-            ##mask save
-            gt_mask = gt_mask.detach().cpu().numpy()
-            
-            # iou, f_score, precision, recall = calculate_metrics(pred_mask, gt_mask)
-            show_mask(gt_mask, plt.gca())
-            show_points(point.detach().cpu().numpy(), point_label.detach().cpu().numpy(), plt.gca())
-            
-            filename = f"{num}_gt_{i}.png"
-            plt.savefig(os.path.join(self.save_base, filename), bbox_inches='tight', pad_inches=0)
-            plt.close()
-        
-        self.metrics_interval_num += 1
         
         ## validation log 
         for metric in ['tp', 'fp', 'fn', 'tn']:
@@ -411,42 +394,14 @@ class SAMFinetuner(pl.LightningModule):
         in enumerate(zip(imgs, gt_masks, pred_masks, points, point_labels, image_ids, confidence_predictions)):
             img = img.permute(1,2,0).detach().cpu().numpy()
             img = augmentation.DeNormalize(img).astype(int)
-            score = score.detach().cpu().numpy()[0][0]
-            plt.figure(figsize=(10,10))
-            plt.imshow(img)
-            id = image_id.split('.')[0]
             pred_mask = pred_mask > 0.0
             
             g_mask = gt_mask.unsqueeze(0).unsqueeze(0)
             iou, f_score, precision, recall = calculate_metrics(pred_mask*1, g_mask*1)
-            show_mask(pred_mask, plt.gca())
             new_p = point.int()[0].detach().cpu()
-            point = point.detach().cpu().numpy()
             self.miou_activation_map[int(new_p[1].item()), int(new_p[0].item()), :] = iou.item()
-            show_points(point, point_label.detach().cpu().numpy(), plt.gca())
-            plt.title(f"Mask, IOU: {iou:.3f}, F-score: {f_score:.3f}, precision: {precision:.3f}, recall: {recall:.3f}, Confidence: {score:.3f}", fontsize=12)
-            plt.axis('off')
-            filename = f"{new_p[0].item(), new_p[1].item()}_pred.png"
-            filename = f"finetuned_{id, int(new_p[1].item()), int(new_p[0].item())}_pred.png"
-            plt.savefig(os.path.join(self.save_base, filename), bbox_inches='tight', pad_inches=0)
-            plt.close()
-        
-            # plt.figure(figsize=(10,10))
-            # plt.imshow(img)
-            #     # ##mask save
-            # gt_mask = gt_mask.detach().cpu().numpy()
-            
-            # show_mask(gt_mask, plt.gca())
-            # show_points(point, point_label.detach().cpu().numpy(), plt.gca())
-            
-            # filename = f"{id}_gt.png"
-            # plt.axis('off')
-            # plt.savefig(os.path.join(self.save_base, filename), bbox_inches='tight', pad_inches=0)
-            # plt.close()
-            
-        # # img = img.permute(1,2,0).detach().cpu().numpy()
-        # # img = augmentation.DeNormalize(img).astype(int)
-        # self.img = img
+        self.img = img
+
         ## validation log 
         for metric in ['tp', 'fp', 'fn', 'tn']:
             self.val_metric[metric].append(outputs[metric])
@@ -463,6 +418,32 @@ class SAMFinetuner(pl.LightningModule):
     def on_test_epoch_end(self):
         print('test_end')
         
+        plt.figure(figsize=(10,10))
+        img = cv2.resize(self.img.astype('float32'), dsize=(1024,1024), interpolation=cv2.INTER_LINEAR).astype('int32')
+        # ## interpolation
+        act_map = cv2.resize(self.miou_activation_map,
+                                    dsize=(512,512),
+                                    interpolation=cv2.INTER_LINEAR)
+        act_map = cv2.resize(act_map, dsize=(1024,1024), interpolation=cv2.INTER_LINEAR)
+        vmax = 0
+        vmin = 1
+        # norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
+        # colormapping = cm.ScalarMappable(norm=norm, cmap='jet')
+        colormapping = cm.ScalarMappable(cmap='jet')
+        # plt.imshow((act_map * 255).astype(np.uint8), cmap='jet', vmin=0, vmax=1)
+        plt.imshow((act_map * 255).astype(np.uint8))
+        plt.imshow(img, alpha=0.5)
+        filename = f"activation_map_gt.png"
+        plt.axis('off')
+        ax = plt.gca()
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="2%", pad=0.1)
+        # plt.jet()
+        cbar = plt.colorbar(colormapping, ax=ax, cax=cax) ## 컬러바 삽입
+        # cbar = plt.colorbar(ax=ax, cax=cax) ## 컬러바 삽입
+        plt.savefig(os.path.join(self.save_base, filename), bbox_inches='tight', pad_inches=0)
+        plt.close()
+
         epoch_average = torch.stack(self.validation_step_outputs).mean()
         self.log("validation_epoch_average iou", epoch_average, sync_dist=True)
         self.validation_step_outputs.clear()  # free memory
@@ -506,20 +487,9 @@ def main():
     
     # load the dataset
     if args.test_only:
-        # test_dataset = custom_text_test.CustomText_test(
-        test_dataset = custom_text_test_realdata.CustomText_test_realdata(
-        # test_dataset = custom_text_test_one.CustomText_test_one(
+        test_dataset = IOU_activation_one_image.IOU_activation_one_image(
+            #face
             data_root='./data',
-        #     data_root='./data/small',
-        #     label_root='./polygon.txt',
-        #     is_training=False,
-        #     load_memory=False,
-        #     cfg=args,
-        #     transform= augmentation.Augmentation(is_training = False, size=args.image_size, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
-        # )
-        # test_dataset = custom_text_test_one.CustomText_test_one(
-            # data_root='./data/validation',
-            # data_root='./data',
             label_root='./polygon.txt',
             is_training=False,
             load_memory=False,
@@ -589,7 +559,7 @@ class PolyMatchingLoss(nn.Module):
         self.device = device
         self.loss_type = loss_type
         self.smooth_L1 = F.smooth_l1_loss
-        self.L2_loss = torch.nn.MSELoss(reduce=False, size_average=False)
+        self.L2_loss = torch.nn.MSELoss(reduction='none')
 
         batch_size = 1
         pidxall = np.zeros(shape=(batch_size, pnum, pnum), dtype=np.int32)

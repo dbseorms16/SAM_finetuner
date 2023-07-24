@@ -5,9 +5,9 @@ python finetune.py \
     --freeze_image_encoder \
     --freeze_mask_decoder \
     --freeze_prompt_encoder \
-    --batch_size 5 \
+    --batch_size 4 \
     --image_size 1024 \
     --steps 1500000 \
     --learning_rate 1.e-5 \
     --weight_decay 0.01 \
-    --metrics_interval 74
+    --metrics_interval 93

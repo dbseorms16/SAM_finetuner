@@ -75,7 +75,7 @@ class CustomText(TextDataset):
         image_shape = image.shape[:2]
         # SAM preprocessing
         # image = self.SAM_transform.apply_image(image)
-        polygons, extended_poly = self.polygon_extender(polygons, num_poly=2)
+        polygons, extended_poly = self.polygon_extender(polygons, num_poly=16)
         
         if self.is_training:
             return self.get_training_data(image, polygons, center_point,
